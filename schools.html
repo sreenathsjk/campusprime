@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Campus Prime — Manage Schools</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --sidebar-w: 240px;
+    --sidebar-bg: #0d1526;
+    --blue: #3b82f6; --blue-dark: #2563eb;
+    --cyan: #06b6d4; --gold: #f59e0b;
+    --success: #10b981; --danger: #ef4444; --purple: #8b5cf6;
+    --bg: #f1f5fd; --card: #ffffff; --border: #e5e9f4;
+    --text: #1e293b; --text-muted: #64748b;
+    --grad: linear-gradient(135deg, #2563eb, #06b6d4);
+  }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* Sidebar — same as dashboard */
+  .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: var(--sidebar-w); background: var(--sidebar-bg); display: flex; flex-direction: column; z-index: 100; overflow-y: auto; transition: transform 0.3s; }
+  .sidebar-logo { padding: 22px 18px; border-bottom: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; gap: 10px; }
+  .logo-mark { width: 36px; height: 36px; background: var(--grad); border-radius: 10px; display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; font-size: 1.1rem; font-family: 'Syne', sans-serif; }
+  .logo-text { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.1rem; color: white; }
+  .logo-text span { color: var(--blue); }
+  .nav-section { padding: 16px 10px 6px; }
+  .nav-section-label { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.25); padding: 0 8px; margin-bottom: 6px; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; cursor: pointer; transition: all 0.2s; margin-bottom: 2px; text-decoration: none; }
+  .nav-item:hover { background: rgba(255,255,255,0.06); }
+  .nav-item.active { background: rgba(59,130,246,0.2); }
+  .nav-icon { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; flex-shrink: 0; background: rgba(255,255,255,0.05); }
+  .nav-item.active .nav-icon { background: rgba(59,130,246,0.2); }
+  .nav-label { font-size: 0.85rem; color: rgba(255,255,255,0.6); white-space: nowrap; }
+  .nav-item.active .nav-label { color: white; font-weight: 600; }
+  .nav-badge { margin-left: auto; background: var(--danger); color: white; border-radius: 100px; padding: 2px 7px; font-size: 0.65rem; font-weight: 700; }
+  .sidebar-footer { margin-top: auto; padding: 14px 10px; border-top: 1px solid rgba(255,255,255,0.06); }
+  .user-card { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 10px; background: rgba(255,255,255,0.04); }
+  .user-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--grad); display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 0.85rem; }
+  .user-name { font-size: 0.82rem; font-weight: 600; color: white; }
+  .user-role { font-size: 0.7rem; color: rgba(255,255,255,0.4); }
+
+  /* Main */
+  .main { margin-left: var(--sidebar-w); min-height: 100vh; display: flex; flex-direction: column; }
+  .topbar { background: var(--card); border-bottom: 1px solid var(--border); padding: 0 24px; height: 62px; display: flex; align-items: center; gap: 14px; position: sticky; top: 0; z-index: 50; }
+  .menu-btn { display: none; background: none; border: none; font-size: 1.3rem; cursor: pointer; color: var(--text); }
+  .topbar-title { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 1.1rem; color: var(--text); }
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .icon-btn { width: 36px; height: 36px; border-radius: 9px; background: var(--bg); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 0.95rem; transition: background 0.2s; }
+  .icon-btn:hover { background: var(--border); }
+
+  .page { padding: 24px; flex: 1; }
+  .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 14px; }
+  .page-title { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.5rem; color: var(--text); margin-bottom: 4px; }
+  .page-sub { font-size: 0.84rem; color: var(--text-muted); }
+
+  .btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px; border-radius: 10px; font-family: 'DM Sans', sans-serif; font-size: 0.85rem; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; text-decoration: none; }
+  .btn-primary { background: var(--grad); color: white; box-shadow: 0 4px 14px rgba(37,99,235,0.3); }
+  .btn-primary:hover { transform: translateY(-1px); }
+
+  /* Filters */
+  .filters-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+  .filter-chip { padding: 7px 16px; border-radius: 100px; font-size: 0.8rem; font-weight: 600; border: 1.5px solid var(--border); background: var(--card); color: var(--text-muted); cursor: pointer; transition: all 0.2s; }
+  .filter-chip.active, .filter-chip:hover { border-color: var(--blue); color: var(--blue); background: rgba(59,130,246,0.06); }
+  .search-wrap { margin-left: auto; display: flex; align-items: center; gap: 8px; background: var(--card); border: 1.5px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+  .search-wrap input { border: none; background: transparent; font-family: 'DM Sans', sans-serif; font-size: 0.85rem; color: var(--text); outline: none; width: 180px; }
+
+  /* Table card */
+  .card { background: var(--card); border-radius: 16px; border: 1px solid var(--border); overflow: hidden; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { padding: 11px 16px; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); text-align: left; background: var(--bg); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tbody td { padding: 13px 16px; font-size: 0.83rem; color: var(--text); border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #fafbff; }
+
+  .school-name { font-weight: 600; margin-bottom: 2px; }
+  .school-meta { font-size: 0.72rem; color: var(--text-muted); }
+
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 100px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; }
+  .bdot { width: 5px; height: 5px; border-radius: 50%; }
+  .b-approved { background: rgba(16,185,129,0.1); color: var(--success); }
+  .b-approved .bdot { background: var(--success); }
+  .b-pending { background: rgba(245,158,11,0.1); color: var(--gold); }
+  .b-pending .bdot { background: var(--gold); }
+  .b-rejected { background: rgba(239,68,68,0.1); color: var(--danger); }
+  .b-rejected .bdot { background: var(--danger); }
+  .b-hold { background: rgba(139,92,246,0.1); color: var(--purple); }
+  .b-hold .bdot { background: var(--purple); }
+  .b-suspended { background: rgba(100,116,139,0.1); color: var(--text-muted); }
+  .b-suspended .bdot { background: var(--text-muted); }
+
+  .plan-tag { padding: 2px 8px; border-radius: 6px; font-size: 0.68rem; font-weight: 700; }
+  .p-basic { background: rgba(100,116,139,0.1); color: var(--text-muted); }
+  .p-pro { background: rgba(59,130,246,0.1); color: var(--blue); }
+  .p-enterprise { background: rgba(245,158,11,0.1); color: var(--gold); }
+
+  .act-btn { padding: 4px 10px; border-radius: 6px; font-size: 0.72rem; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--bg); color: var(--text); transition: all 0.2s; margin-right: 3px; }
+  .act-btn:hover { background: var(--blue); color: white; border-color: var(--blue); }
+  .act-btn.approve:hover { background: var(--success); border-color: var(--success); }
+  .act-btn.reject:hover { background: var(--danger); border-color: var(--danger); }
+  .act-btn.hold:hover { background: var(--purple); border-color: var(--purple); }
+
+  /* Pagination */
+  .pagination { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-top: 1px solid var(--border); }
+  .page-info { font-size: 0.8rem; color: var(--text-muted); }
+  .page-btns { display: flex; gap: 6px; }
+  .page-btn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 0.8rem; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
+  .page-btn.active { background: var(--blue); color: white; border-color: var(--blue); }
+  .page-btn:hover:not(.active) { background: var(--border); }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 24px; right: 24px; color: white; padding: 12px 20px; border-radius: 12px; font-size: 0.85rem; font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,0.15); z-index: 999; transform: translateY(80px); opacity: 0; transition: all 0.3s; }
+  .toast.show { transform: translateY(0); opacity: 1; }
+
+  /* Modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: white; border-radius: 20px; padding: 28px; width: 100%; max-width: 420px; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
+  .modal h3 { font-family: 'Syne', sans-serif; font-size: 1.2rem; margin-bottom: 10px; color: var(--text); }
+  .modal p { font-size: 0.88rem; color: var(--text-muted); margin-bottom: 20px; }
+  .modal-btns { display: flex; gap: 10px; justify-content: flex-end; }
+  .modal-cancel { padding: 9px 18px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+  .modal-confirm { padding: 9px 18px; border-radius: 10px; border: none; color: white; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+
+  /* Overlay */
+  .side-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 99; }
+  .side-overlay.show { display: block; }
+
+  @media (max-width: 900px) {
+    .sidebar { transform: translateX(-100%); }
+    .sidebar.open { transform: translateX(0); }
+    .main { margin-left: 0; }
+    .menu-btn { display: flex; }
+    .search-wrap { margin-left: 0; width: 100%; }
+    .search-wrap input { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="side-overlay" id="overlay" onclick="closeSidebar()"></div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-mark">C</div>
+    <div class="logo-text">Campus<span>Prime</span></div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-label">Overview</div>
+    <a class="nav-item" href="index.html"><div class="nav-icon">📊</div><span class="nav-label">Dashboard</span></a>
+    <a class="nav-item active" href="schools.html"><div class="nav-icon">🏫</div><span class="nav-label">Schools</span><span class="nav-badge">7</span></a>
+    <a class="nav-item" href="#"><div class="nav-icon">💳</div><span class="nav-label">Subscriptions</span></a>
+    <a class="nav-item" href="#"><div class="nav-icon">💰</div><span class="nav-label">Revenue</span></a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-label">Management</div>
+    <a class="nav-item" href="#"><div class="nav-icon">👥</div><span class="nav-label">All Users</span></a>
+    <a class="nav-item" href="#"><div class="nav-icon">📋</div><span class="nav-label">Audit Logs</span></a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-label">System</div>
+    <a class="nav-item" href="#"><div class="nav-icon">⚙️</div><span class="nav-label">Settings</span></a>
+    <a class="nav-item" href="../index.html"><div class="nav-icon">🌐</div><span class="nav-label">View Landing</span></a>
+  </div>
+  <div class="sidebar-footer">
+    <div class="user-card">
+      <div class="user-avatar">SA</div>
+      <div><div class="user-name">Super Admin</div><div class="user-role">Platform Owner</div></div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+  <header class="topbar">
+    <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+    <div class="topbar-title">Schools Management</div>
+    <div class="topbar-right">
+      <div class="icon-btn">🔔</div>
+      <div class="icon-btn" onclick="toggleDark()">🌓</div>
+    </div>
+  </header>
+
+  <div class="page">
+    <div class="page-header">
+      <div>
+        <div class="page-title">All Schools</div>
+        <div class="page-sub">547 total · 7 pending approval</div>
+      </div>
+      <button class="btn btn-primary">+ Add School</button>
+    </div>
+
+    <!-- Filters -->
+    <div class="filters-bar">
+      <button class="filter-chip active" onclick="filter(this,'all')">All (547)</button>
+      <button class="filter-chip" onclick="filter(this,'approved')">Approved (498)</button>
+      <button class="filter-chip" onclick="filter(this,'pending')">Pending (7)</button>
+      <button class="filter-chip" onclick="filter(this,'hold')">On Hold (3)</button>
+      <button class="filter-chip" onclick="filter(this,'suspended')">Suspended (2)</button>
+      <div class="search-wrap">
+        🔍 <input type="text" placeholder="Search schools..." oninput="searchSchools(this.value)"/>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>School</th>
+              <th>Contact</th>
+              <th>Status</th>
+              <th>Plan</th>
+              <th>Students</th>
+              <th>Registered</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="schoolsBody">
+            <!-- Populated by JS -->
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <div class="page-info">Showing 1–10 of 547 schools</div>
+        <div class="page-btns">
+          <button class="page-btn">‹</button>
+          <button class="page-btn active">1</button>
+          <button class="page-btn">2</button>
+          <button class="page-btn">3</button>
+          <button class="page-btn">›</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm Modal -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal">
+    <h3 id="modalTitle">Confirm Action</h3>
+    <p id="modalBody">Are you sure?</p>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+      <button class="modal-confirm" id="modalConfirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const schools = [
+    { name: 'Green Valley Academy', principal: 'Dr. Sarah Johnson', city: 'Springfield, IL', email: 'admin@greenvalley.edu', status: 'approved', plan: 'pro', students: 847, date: 'Jan 15, 2025' },
+    { name: 'Sunrise International', principal: 'Marcus Rivera', city: 'Miami, FL', email: 'admin@sunrise.edu', status: 'approved', plan: 'enterprise', students: 2340, date: 'Nov 3, 2024' },
+    { name: 'Westbrook Academy', principal: 'Dr. Alicia Park', city: 'Seattle, WA', email: 'admin@westbrook.edu', status: 'pending', plan: 'basic', students: 0, date: 'Mar 1, 2025' },
+    { name: 'Brightside Elementary', principal: 'Prof. James Carter', city: 'Austin, TX', email: 'admin@brightside.edu', status: 'pending', plan: 'pro', students: 0, date: 'Mar 2, 2025' },
+    { name: 'Pine Ridge School', principal: 'Dr. Priya Patel', city: 'Denver, CO', email: 'admin@pineridge.edu', status: 'pending', plan: 'pro', students: 0, date: 'Mar 2, 2025' },
+    { name: 'Valley Ridge High', principal: 'Thomas Reed', city: 'Portland, OR', email: 'admin@valleyridge.edu', status: 'hold', plan: 'basic', students: 312, date: 'Dec 10, 2024' },
+    { name: 'Maple Grove School', principal: 'Jennifer Kim', city: 'Boston, MA', email: 'admin@maplegrove.edu', status: 'suspended', plan: 'pro', students: 428, date: 'Sep 5, 2024' },
+    { name: 'Oakwood Preparatory', principal: 'Dr. Michael Brown', city: 'Chicago, IL', email: 'admin@oakwood.edu', status: 'approved', plan: 'enterprise', students: 1820, date: 'Aug 20, 2024' },
+    { name: 'Lakeside Academy', principal: 'Amanda Chen', city: 'San Diego, CA', email: 'admin@lakeside.edu', status: 'approved', plan: 'pro', students: 634, date: 'Jul 14, 2024' },
+    { name: 'Heritage High School', principal: 'Robert Davis', city: 'Phoenix, AZ', email: 'admin@heritage.edu', status: 'approved', plan: 'basic', students: 198, date: 'Jun 1, 2024' },
+  ];
+
+  let filtered = [...schools];
+  let currentFilter = 'all';
+
+  const statusMap = {
+    approved: '<span class="badge b-approved"><span class="bdot"></span>Approved</span>',
+    pending:  '<span class="badge b-pending"><span class="bdot"></span>Pending</span>',
+    rejected: '<span class="badge b-rejected"><span class="bdot"></span>Rejected</span>',
+    hold:     '<span class="badge b-hold"><span class="bdot"></span>On Hold</span>',
+    suspended:'<span class="badge b-suspended"><span class="bdot"></span>Suspended</span>',
+  };
+
+  const planMap = {
+    basic: '<span class="plan-tag p-basic">BASIC</span>',
+    pro: '<span class="plan-tag p-pro">PRO</span>',
+    enterprise: '<span class="plan-tag p-enterprise">ENTERPRISE</span>',
+  };
+
+  function getActions(status, idx) {
+    if (status === 'pending') {
+      return `<button class="act-btn approve" onclick="changeStatus(${idx},'approved')">✓ Approve</button>
+              <button class="act-btn hold" onclick="changeStatus(${idx},'hold')">Hold</button>
+              <button class="act-btn reject" onclick="changeStatus(${idx},'rejected')">✕ Reject</button>`;
+    }
+    if (status === 'approved') {
+      return `<button class="act-btn" onclick="viewSchool(${idx})">👁 View</button>
+              <button class="act-btn hold" onclick="changeStatus(${idx},'hold')">Hold</button>
+              <button class="act-btn reject" onclick="changeStatus(${idx},'suspended')">Suspend</button>`;
+    }
+    if (status === 'hold' || status === 'suspended') {
+      return `<button class="act-btn approve" onclick="changeStatus(${idx},'approved')">Activate</button>
+              <button class="act-btn" onclick="viewSchool(${idx})">View</button>
+              <button class="act-btn reject" onclick="changeStatus(${idx},'rejected')">Delete</button>`;
+    }
+    return `<button class="act-btn" onclick="viewSchool(${idx})">View</button>`;
+  }
+
+  function render() {
+    const tbody = document.getElementById('schoolsBody');
+    tbody.innerHTML = filtered.map((s, i) => `
+      <tr id="row-${i}">
+        <td>
+          <div class="school-name">${s.name}</div>
+          <div class="school-meta">${s.principal} · ${s.city}</div>
+        </td>
+        <td style="font-size:0.8rem">${s.email}</td>
+        <td>${statusMap[s.status]}</td>
+        <td>${planMap[s.plan]}</td>
+        <td>${s.students > 0 ? s.students.toLocaleString() : '—'}</td>
+        <td style="font-size:0.8rem;color:var(--text-muted)">${s.date}</td>
+        <td>${getActions(s.status, i)}</td>
+      </tr>
+    `).join('');
+  }
+
+  function filter(btn, status) {
+    document.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = status;
+    filtered = status === 'all' ? [...schools] : schools.filter(s => s.status === status);
+    render();
+  }
+
+  function searchSchools(q) {
+    const base = currentFilter === 'all' ? schools : schools.filter(s => s.status === currentFilter);
+    filtered = q ? base.filter(s =>
+      s.name.toLowerCase().includes(q.toLowerCase()) ||
+      s.principal.toLowerCase().includes(q.toLowerCase()) ||
+      s.city.toLowerCase().includes(q.toLowerCase())
+    ) : base;
+    render();
+  }
+
+  function changeStatus(idx, newStatus) {
+    const s = filtered[idx];
+    const actionLabels = { approved:'Approve', suspended:'Suspend', hold:'Put on Hold', rejected:'Reject' };
+    showConfirm(
+      `${actionLabels[newStatus]} School`,
+      `Are you sure you want to ${actionLabels[newStatus].toLowerCase()} "${s.name}"?`,
+      newStatus === 'rejected' || newStatus === 'suspended' ? '#ef4444' : '#10b981',
+      () => {
+        filtered[idx].status = newStatus;
+        // Update original array too
+        const orig = schools.find(sc => sc.name === s.name);
+        if (orig) orig.status = newStatus;
+        render();
+        const msgs = { approved:'✅ School approved!', suspended:'School suspended.', hold:'School put on hold.', rejected:'School rejected.' };
+        showToast(msgs[newStatus], newStatus === 'approved' ? '#10b981' : '#ef4444');
+      }
+    );
+  }
+
+  function viewSchool(idx) {
+    const s = filtered[idx];
+    showToast(`Viewing ${s.name} — detail page coming soon!`, '#3b82f6');
+  }
+
+  // Modal
+  let confirmCallback = null;
+  function showConfirm(title, body, color, cb) {
+    document.getElementById('modalTitle').textContent = title;
+    document.getElementById('modalBody').textContent = body;
+    document.getElementById('modalConfirm').style.background = color;
+    document.getElementById('modalConfirm').textContent = title.split(' ')[0];
+    confirmCallback = cb;
+    document.getElementById('confirmModal').classList.add('open');
+  }
+
+  document.getElementById('modalConfirm').onclick = () => {
+    if (confirmCallback) confirmCallback();
+    closeModal();
+  };
+
+  function closeModal() {
+    document.getElementById('confirmModal').classList.remove('open');
+    confirmCallback = null;
+  }
+
+  // Toast
+  function showToast(msg, color) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.style.background = color || '#10b981';
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+
+  // Sidebar
+  function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('open');
+    document.getElementById('overlay').classList.toggle('show');
+  }
+
+  function closeSidebar() {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('overlay').classList.remove('show');
+  }
+
+  // Dark mode
+  let dark = false;
+  function toggleDark() {
+    dark = !dark;
+    const r = document.documentElement.style;
+    r.setProperty('--bg', dark ? '#0a0f1e' : '#f1f5fd');
+    r.setProperty('--card', dark ? '#111827' : '#ffffff');
+    r.setProperty('--border', dark ? 'rgba(255,255,255,0.08)' : '#e5e9f4');
+    r.setProperty('--text', dark ? '#e2e8f0' : '#1e293b');
+    r.setProperty('--text-muted', dark ? '#94a3b8' : '#64748b');
+  }
+
+  // Initial render
+  render();
+</script>
+</body>
+</html>

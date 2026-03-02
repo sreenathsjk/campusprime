@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Campus Prime — Super Admin Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --sidebar-w: 240px;
+    --sidebar-bg: #0d1526;
+    --blue: #3b82f6;
+    --blue-dark: #2563eb;
+    --cyan: #06b6d4;
+    --gold: #f59e0b;
+    --success: #10b981;
+    --danger: #ef4444;
+    --purple: #8b5cf6;
+    --white: #fff;
+    --bg: #f1f5fd;
+    --card: #ffffff;
+    --border: #e5e9f4;
+    --text: #1e293b;
+    --text-muted: #64748b;
+    --grad: linear-gradient(135deg, #2563eb, #06b6d4);
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: var(--sidebar-w);
+    background: var(--sidebar-bg);
+    display: flex; flex-direction: column;
+    z-index: 100; overflow-y: auto;
+    transition: transform 0.3s;
+  }
+
+  .sidebar-logo {
+    padding: 22px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    display: flex; align-items: center; gap: 10px;
+  }
+
+  .logo-mark {
+    width: 36px; height: 36px;
+    background: var(--grad); border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-weight: 800; font-size: 1.1rem;
+    font-family: 'Syne', sans-serif; flex-shrink: 0;
+  }
+
+  .logo-text {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800; font-size: 1.1rem; color: white;
+  }
+
+  .logo-text span { color: var(--blue); }
+
+  .nav-section { padding: 16px 10px 6px; }
+
+  .nav-section-label {
+    font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: rgba(255,255,255,0.25);
+    padding: 0 8px; margin-bottom: 6px;
+  }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 10px; border-radius: 10px;
+    cursor: pointer; transition: all 0.2s;
+    margin-bottom: 2px; text-decoration: none;
+  }
+
+  .nav-item:hover { background: rgba(255,255,255,0.06); }
+  .nav-item.active { background: rgba(59,130,246,0.2); }
+
+  .nav-icon {
+    width: 32px; height: 32px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.9rem; flex-shrink: 0;
+    background: rgba(255,255,255,0.05);
+  }
+
+  .nav-item.active .nav-icon { background: rgba(59,130,246,0.2); }
+
+  .nav-label {
+    font-size: 0.85rem; color: rgba(255,255,255,0.6);
+    white-space: nowrap;
+  }
+
+  .nav-item.active .nav-label { color: white; font-weight: 600; }
+
+  .nav-badge {
+    margin-left: auto;
+    background: var(--danger); color: white;
+    border-radius: 100px; padding: 2px 7px;
+    font-size: 0.65rem; font-weight: 700;
+  }
+
+  .sidebar-footer {
+    margin-top: auto;
+    padding: 14px 10px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+  }
+
+  .user-card {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px; border-radius: 10px;
+    background: rgba(255,255,255,0.04); cursor: pointer;
+  }
+
+  .user-avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--grad); display: flex;
+    align-items: center; justify-content: center;
+    color: white; font-weight: 700; font-size: 0.85rem; flex-shrink: 0;
+  }
+
+  .user-name { font-size: 0.82rem; font-weight: 600; color: white; }
+  .user-role { font-size: 0.7rem; color: rgba(255,255,255,0.4); }
+
+  .logout-btn {
+    margin-left: auto; background: none; border: none;
+    color: rgba(255,255,255,0.3); cursor: pointer; font-size: 1rem;
+    transition: color 0.2s;
+  }
+
+  .logout-btn:hover { color: var(--danger); }
+
+  /* ── MAIN ── */
+  .main {
+    margin-left: var(--sidebar-w);
+    min-height: 100vh;
+    display: flex; flex-direction: column;
+  }
+
+  /* ── TOPBAR ── */
+  .topbar {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px; height: 62px;
+    display: flex; align-items: center; gap: 14px;
+    position: sticky; top: 0; z-index: 50;
+  }
+
+  .menu-btn {
+    display: none; background: none; border: none;
+    font-size: 1.3rem; cursor: pointer; color: var(--text);
+  }
+
+  .topbar-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700; font-size: 1.1rem; color: var(--text);
+  }
+
+  .topbar-right {
+    margin-left: auto; display: flex; align-items: center; gap: 10px;
+  }
+
+  .topbar-date {
+    font-size: 0.8rem; color: var(--text-muted);
+    display: none;
+  }
+
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 9px;
+    background: var(--bg); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 0.95rem; position: relative;
+    transition: background 0.2s;
+  }
+
+  .icon-btn:hover { background: var(--border); }
+
+  .notif-dot {
+    position: absolute; top: 5px; right: 5px;
+    width: 8px; height: 8px; background: var(--danger);
+    border-radius: 50%; border: 2px solid var(--card);
+  }
+
+  /* ── PAGE ── */
+  .page { padding: 24px; flex: 1; }
+
+  .page-header {
+    display: flex; justify-content: space-between;
+    align-items: flex-start; margin-bottom: 24px;
+    flex-wrap: wrap; gap: 14px;
+  }
+
+  .page-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800; font-size: 1.5rem; color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  .page-sub { font-size: 0.84rem; color: var(--text-muted); }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px; border-radius: 10px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.85rem; font-weight: 600;
+    cursor: pointer; border: none; transition: all 0.2s;
+    text-decoration: none; white-space: nowrap;
+  }
+
+  .btn-primary {
+    background: var(--grad); color: white;
+    box-shadow: 0 4px 14px rgba(37,99,235,0.3);
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(37,99,235,0.4);
+  }
+
+  /* ── STATS GRID ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px; margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: var(--card); border-radius: 16px;
+    padding: 20px; border: 1px solid var(--border);
+    transition: transform 0.2s, box-shadow 0.2s;
+    cursor: default;
+  }
+
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+  }
+
+  .stat-top {
+    display: flex; justify-content: space-between;
+    align-items: flex-start; margin-bottom: 14px;
+  }
+
+  .stat-icon {
+    width: 42px; height: 42px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem;
+  }
+
+  .stat-trend {
+    display: flex; align-items: center; gap: 3px;
+    font-size: 0.75rem; font-weight: 700;
+    padding: 3px 8px; border-radius: 100px;
+  }
+
+  .trend-up { background: rgba(16,185,129,0.1); color: var(--success); }
+  .trend-down { background: rgba(239,68,68,0.1); color: var(--danger); }
+  .trend-new { background: rgba(245,158,11,0.1); color: var(--gold); }
+
+  .stat-val {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800; font-size: 2rem; color: var(--text);
+    line-height: 1; margin-bottom: 5px;
+  }
+
+  .stat-label { font-size: 0.8rem; color: var(--text-muted); font-weight: 500; }
+
+  /* ── GRID ── */
+  .grid-2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+
+  /* ── CARD ── */
+  .card {
+    background: var(--card); border-radius: 16px;
+    border: 1px solid var(--border); overflow: hidden;
+  }
+
+  .card-head {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+
+  .card-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700; font-size: 0.95rem; color: var(--text);
+  }
+
+  .card-sub { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+
+  .card-body { padding: 20px; }
+
+  .see-all {
+    font-size: 0.78rem; color: var(--blue);
+    text-decoration: none; font-weight: 600;
+    transition: opacity 0.2s;
+  }
+
+  .see-all:hover { opacity: 0.7; }
+
+  /* ── CHART ── */
+  .bar-chart {
+    height: 160px; display: flex;
+    align-items: flex-end; gap: 10px;
+  }
+
+  .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+
+  .bar {
+    width: 100%; border-radius: 6px 6px 0 0;
+    min-height: 4px; transition: opacity 0.2s;
+    cursor: pointer;
+  }
+
+  .bar:hover { opacity: 0.8; }
+  .bar-lbl { font-size: 0.65rem; color: var(--text-muted); font-weight: 600; }
+
+  /* ── DONUT ── */
+  .donut-wrap { display: flex; align-items: center; gap: 20px; }
+  .donut-legend { display: flex; flex-direction: column; gap: 10px; }
+
+  .legend-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.8rem; color: var(--text);
+  }
+
+  .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+  .legend-pct { margin-left: auto; font-weight: 700; font-size: 0.78rem; color: var(--text-muted); }
+
+  /* ── MINI STAT ── */
+  .mini-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+
+  .mini-stat {
+    background: var(--bg); border-radius: 10px;
+    padding: 12px; text-align: center;
+  }
+
+  .mini-val {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800; font-size: 1.3rem; color: var(--text);
+    margin-bottom: 3px;
+  }
+
+  .mini-lbl { font-size: 0.68rem; color: var(--text-muted); font-weight: 500; }
+
+  /* ── SCHOOLS TABLE ── */
+  .table-wrap { overflow-x: auto; }
+
+  table { width: 100%; border-collapse: collapse; }
+
+  thead th {
+    padding: 10px 16px;
+    font-size: 0.68rem; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-muted); text-align: left;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 12px 16px; font-size: 0.83rem;
+    color: var(--text); border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #fafbff; }
+
+  .school-name-cell strong { display: block; font-weight: 600; }
+  .school-name-cell span { font-size: 0.73rem; color: var(--text-muted); }
+
+  /* ── BADGES ── */
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px; border-radius: 100px;
+    font-size: 0.7rem; font-weight: 700; white-space: nowrap;
+  }
+
+  .badge-dot-sm { width: 5px; height: 5px; border-radius: 50%; }
+
+  .b-approved { background: rgba(16,185,129,0.1); color: var(--success); }
+  .b-approved .badge-dot-sm { background: var(--success); }
+  .b-pending { background: rgba(245,158,11,0.1); color: var(--gold); }
+  .b-pending .badge-dot-sm { background: var(--gold); }
+  .b-rejected { background: rgba(239,68,68,0.1); color: var(--danger); }
+  .b-rejected .badge-dot-sm { background: var(--danger); }
+  .b-hold { background: rgba(139,92,246,0.1); color: var(--purple); }
+  .b-hold .badge-dot-sm { background: var(--purple); }
+
+  .plan-tag {
+    padding: 2px 8px; border-radius: 6px;
+    font-size: 0.68rem; font-weight: 700;
+  }
+
+  .p-basic { background: rgba(100,116,139,0.1); color: var(--text-muted); }
+  .p-pro { background: rgba(59,130,246,0.1); color: var(--blue); }
+  .p-enterprise { background: rgba(245,158,11,0.1); color: var(--gold); }
+
+  /* ── ACTION BUTTONS ── */
+  .act-btn {
+    padding: 4px 10px; border-radius: 6px;
+    font-size: 0.72rem; font-weight: 600;
+    cursor: pointer; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text);
+    transition: all 0.2s; margin-right: 4px;
+  }
+
+  .act-btn:hover { background: var(--blue); color: white; border-color: var(--blue); }
+  .act-btn.approve:hover { background: var(--success); border-color: var(--success); }
+  .act-btn.reject:hover { background: var(--danger); border-color: var(--danger); }
+
+  /* ── NOTIFICATIONS ── */
+  .notif-list { display: flex; flex-direction: column; }
+
+  .notif-item {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+  }
+
+  .notif-item:last-child { border-bottom: none; }
+
+  .notif-icon {
+    width: 34px; height: 34px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.9rem; flex-shrink: 0;
+  }
+
+  .notif-title { font-size: 0.83rem; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+  .notif-sub { font-size: 0.75rem; color: var(--text-muted); }
+  .notif-time { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; margin-left: auto; }
+
+  /* ── TOAST ── */
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--success); color: white;
+    padding: 12px 20px; border-radius: 12px;
+    font-size: 0.85rem; font-weight: 600;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    z-index: 999; transform: translateY(80px);
+    opacity: 0; transition: all 0.3s;
+  }
+
+  .toast.show { transform: translateY(0); opacity: 1; }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 900px) {
+    .sidebar { transform: translateX(-100%); }
+    .sidebar.open { transform: translateX(0); }
+    .main { margin-left: 0; }
+    .menu-btn { display: flex; }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .topbar-date { display: block; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media (max-width: 480px) {
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .page { padding: 16px; }
+    .mini-stats { grid-template-columns: 1fr 1fr 1fr; }
+  }
+
+  /* ── OVERLAY ── */
+  .overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5); z-index: 99;
+  }
+
+  .overlay.show { display: block; }
+</style>
+</head>
+<body>
+
+<!-- Auth check -->
+<script>
+  // Redirect to login if not authenticated
+  // In production, this would verify a real JWT token
+  // For demo, we use sessionStorage
+  // Comment this out if you want direct access
+  // if (!sessionStorage.getItem('admin_logged_in')) {
+  //   window.location.href = 'login.html';
+  // }
+</script>
+
+<div class="overlay" id="overlay" onclick="closeSidebar()"></div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-mark">C</div>
+    <div class="logo-text">Campus<span>Prime</span></div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">Overview</div>
+    <a class="nav-item active" href="index.html">
+      <div class="nav-icon">📊</div>
+      <span class="nav-label">Dashboard</span>
+    </a>
+    <a class="nav-item" href="schools.html">
+      <div class="nav-icon">🏫</div>
+      <span class="nav-label">Schools</span>
+      <span class="nav-badge">7</span>
+    </a>
+    <a class="nav-item" href="#">
+      <div class="nav-icon">💳</div>
+      <span class="nav-label">Subscriptions</span>
+    </a>
+    <a class="nav-item" href="#">
+      <div class="nav-icon">💰</div>
+      <span class="nav-label">Revenue</span>
+    </a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">Management</div>
+    <a class="nav-item" href="#">
+      <div class="nav-icon">👥</div>
+      <span class="nav-label">All Users</span>
+    </a>
+    <a class="nav-item" href="#">
+      <div class="nav-icon">📋</div>
+      <span class="nav-label">Audit Logs</span>
+    </a>
+    <a class="nav-item" href="#">
+      <div class="nav-icon">📢</div>
+      <span class="nav-label">Broadcast</span>
+    </a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">System</div>
+    <a class="nav-item" href="#">
+      <div class="nav-icon">⚙️</div>
+      <span class="nav-label">Settings</span>
+    </a>
+    <a class="nav-item" href="#">
+      <div class="nav-icon">🔒</div>
+      <span class="nav-label">Security</span>
+    </a>
+    <a class="nav-item" href="../index.html">
+      <div class="nav-icon">🌐</div>
+      <span class="nav-label">View Landing</span>
+    </a>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="user-card">
+      <div class="user-avatar">SA</div>
+      <div>
+        <div class="user-name">Super Admin</div>
+        <div class="user-role">Platform Owner</div>
+      </div>
+      <button class="logout-btn" onclick="logout()" title="Logout">⇥</button>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+    <div class="topbar-title">Super Admin</div>
+    <span class="topbar-date" id="dateDisplay"></span>
+    <div class="topbar-right">
+      <div class="icon-btn" title="Notifications">
+        🔔 <span class="notif-dot"></span>
+      </div>
+      <div class="icon-btn" onclick="toggleDark()" title="Toggle theme">🌓</div>
+    </div>
+  </header>
+
+  <!-- PAGE -->
+  <div class="page">
+
+    <!-- Header -->
+    <div class="page-header">
+      <div>
+        <div class="page-title">Platform Overview 👋</div>
+        <div class="page-sub" id="greetSub">Loading...</div>
+      </div>
+      <a href="schools.html" class="btn btn-primary">🏫 Manage Schools</a>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-top">
+          <div class="stat-icon" style="background:rgba(59,130,246,0.1)">🏫</div>
+          <span class="stat-trend trend-up">↑ 12%</span>
+        </div>
+        <div class="stat-val">547</div>
+        <div class="stat-label">Total Schools</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <div class="stat-icon" style="background:rgba(16,185,129,0.1)">✅</div>
+          <span class="stat-trend trend-up">↑ 8%</span>
+        </div>
+        <div class="stat-val">498</div>
+        <div class="stat-label">Approved Schools</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <div class="stat-icon" style="background:rgba(245,158,11,0.1)">⏳</div>
+          <span class="stat-trend trend-new">+7 new</span>
+        </div>
+        <div class="stat-val">7</div>
+        <div class="stat-label">Pending Approval</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <div class="stat-icon" style="background:rgba(6,182,212,0.1)">👨‍🎓</div>
+          <span class="stat-trend trend-up">↑ 15%</span>
+        </div>
+        <div class="stat-val">124K</div>
+        <div class="stat-label">Total Students</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <div class="stat-icon" style="background:rgba(139,92,246,0.1)">👨‍🏫</div>
+          <span class="stat-trend trend-up">↑ 9%</span>
+        </div>
+        <div class="stat-val">8,340</div>
+        <div class="stat-label">Total Teachers</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-top">
+          <div class="stat-icon" style="background:rgba(16,185,129,0.1)">💰</div>
+          <span class="stat-trend trend-up">↑ 22%</span>
+        </div>
+        <div class="stat-val">$68.4K</div>
+        <div class="stat-label">Monthly Revenue</div>
+      </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="grid-2">
+
+      <!-- Bar Chart -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">School Registrations</div>
+            <div class="card-sub">Last 6 months</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="bar-chart">
+            <div class="bar-col">
+              <div class="bar" style="height:55%;background:linear-gradient(180deg,var(--blue),rgba(59,130,246,0.3))"></div>
+              <div class="bar-lbl">Oct</div>
+            </div>
+            <div class="bar-col">
+              <div class="bar" style="height:70%;background:linear-gradient(180deg,var(--blue),rgba(59,130,246,0.3))"></div>
+              <div class="bar-lbl">Nov</div>
+            </div>
+            <div class="bar-col">
+              <div class="bar" style="height:45%;background:linear-gradient(180deg,var(--blue),rgba(59,130,246,0.3))"></div>
+              <div class="bar-lbl">Dec</div>
+            </div>
+            <div class="bar-col">
+              <div class="bar" style="height:82%;background:linear-gradient(180deg,var(--blue),rgba(59,130,246,0.3))"></div>
+              <div class="bar-lbl">Jan</div>
+            </div>
+            <div class="bar-col">
+              <div class="bar" style="height:75%;background:linear-gradient(180deg,var(--blue),rgba(59,130,246,0.3))"></div>
+              <div class="bar-lbl">Feb</div>
+            </div>
+            <div class="bar-col">
+              <div class="bar" style="height:100%;background:linear-gradient(180deg,var(--cyan),var(--blue))"></div>
+              <div class="bar-lbl" style="color:var(--blue);font-weight:700">Mar</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Plan Distribution -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Plan Distribution</div>
+            <div class="card-sub">498 active schools</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="mini-stats" style="margin-bottom:18px">
+            <div class="mini-stat">
+              <div class="mini-val" style="color:var(--text-muted)">280</div>
+              <div class="mini-lbl">Basic</div>
+            </div>
+            <div class="mini-stat">
+              <div class="mini-val" style="color:var(--blue)">170</div>
+              <div class="mini-lbl">Pro</div>
+            </div>
+            <div class="mini-stat">
+              <div class="mini-val" style="color:var(--gold)">48</div>
+              <div class="mini-lbl">Enterprise</div>
+            </div>
+          </div>
+          <div class="donut-wrap">
+            <svg width="90" height="90" viewBox="0 0 90 90" style="flex-shrink:0">
+              <circle cx="45" cy="45" r="34" fill="none" stroke="#e5e9f4" stroke-width="13"/>
+              <circle cx="45" cy="45" r="34" fill="none" stroke="var(--blue)" stroke-width="13"
+                stroke-dasharray="134 214" stroke-dashoffset="54" stroke-linecap="round"/>
+              <circle cx="45" cy="45" r="34" fill="none" stroke="var(--gold)" stroke-width="13"
+                stroke-dasharray="65 214" stroke-dashoffset="-80" stroke-linecap="round"/>
+              <circle cx="45" cy="45" r="34" fill="none" stroke="#94a3b8" stroke-width="13"
+                stroke-dasharray="107 214" stroke-dashoffset="-145" stroke-linecap="round"/>
+            </svg>
+            <div class="donut-legend">
+              <div class="legend-row">
+                <span class="legend-dot" style="background:var(--blue)"></span>
+                Pro <span class="legend-pct">34%</span>
+              </div>
+              <div class="legend-row">
+                <span class="legend-dot" style="background:var(--gold)"></span>
+                Enterprise <span class="legend-pct">10%</span>
+              </div>
+              <div class="legend-row">
+                <span class="legend-dot" style="background:#94a3b8"></span>
+                Basic <span class="legend-pct">56%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pending Schools + Notifications -->
+    <div class="grid-2">
+
+      <!-- Pending Schools -->
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">⏳ Pending Approvals</div>
+            <div class="card-sub">7 schools waiting for review</div>
+          </div>
+          <a href="schools.html" class="see-all">View all →</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>School</th>
+                <th>Plan</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <div class="school-name-cell">
+                    <strong>Westbrook Academy</strong>
+                    <span>Seattle, WA · Mar 1</span>
+                  </div>
+                </td>
+                <td><span class="plan-tag p-basic">BASIC</span></td>
+                <td>
+                  <button class="act-btn approve" onclick="approveSchool(this, 'Westbrook Academy')">✓ Approve</button>
+                  <button class="act-btn reject">✕</button>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="school-name-cell">
+                    <strong>Brightside Elementary</strong>
+                    <span>Austin, TX · Mar 2</span>
+                  </div>
+                </td>
+                <td><span class="plan-tag p-pro">PRO</span></td>
+                <td>
+                  <button class="act-btn approve" onclick="approveSchool(this, 'Brightside Elementary')">✓ Approve</button>
+                  <button class="act-btn reject">✕</button>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="school-name-cell">
+                    <strong>Pine Ridge School</strong>
+                    <span>Denver, CO · Mar 2</span>
+                  </div>
+                </td>
+                <td><span class="plan-tag p-pro">PRO</span></td>
+                <td>
+                  <button class="act-btn approve" onclick="approveSchool(this, 'Pine Ridge School')">✓ Approve</button>
+                  <button class="act-btn reject">✕</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Notifications -->
+      <div class="card">
+        <div class="card-head">
+          <div class="card-title">🔔 Recent Notifications</div>
+          <a href="#" class="see-all">Mark all read</a>
+        </div>
+        <div class="card-body" style="padding-top:8px">
+          <div class="notif-list">
+            <div class="notif-item">
+              <div class="notif-icon" style="background:rgba(245,158,11,0.1)">🏫</div>
+              <div>
+                <div class="notif-title">New school registration</div>
+                <div class="notif-sub">Pine Ridge School is pending</div>
+              </div>
+              <div class="notif-time">2m</div>
+            </div>
+            <div class="notif-item">
+              <div class="notif-icon" style="background:rgba(16,185,129,0.1)">💰</div>
+              <div>
+                <div class="notif-title">Subscription upgraded</div>
+                <div class="notif-sub">Sunrise → Enterprise Plan</div>
+              </div>
+              <div class="notif-time">1h</div>
+            </div>
+            <div class="notif-item">
+              <div class="notif-icon" style="background:rgba(239,68,68,0.1)">⚠️</div>
+              <div>
+                <div class="notif-title">Subscription expiring</div>
+                <div class="notif-sub">Valley Ridge — expires in 3 days</div>
+              </div>
+              <div class="notif-time">4h</div>
+            </div>
+            <div class="notif-item">
+              <div class="notif-icon" style="background:rgba(59,130,246,0.1)">✅</div>
+              <div>
+                <div class="notif-title">School approved</div>
+                <div class="notif-sub">Green Valley Academy activated</div>
+              </div>
+              <div class="notif-time">1d</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Revenue Summary -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">💰 Revenue Summary</div>
+          <div class="card-sub">Current month breakdown</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div style="display:flex;gap:32px;flex-wrap:wrap;margin-bottom:20px">
+          <div>
+            <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:4px">Monthly Revenue</div>
+            <div style="font-family:'Syne',sans-serif;font-size:2.2rem;font-weight:800;color:var(--text)">$68,402</div>
+            <div style="font-size:0.8rem;color:var(--success);font-weight:600">↑ $12,400 vs last month</div>
+          </div>
+          <div>
+            <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:4px">Annual Run Rate</div>
+            <div style="font-family:'Syne',sans-serif;font-size:2.2rem;font-weight:800;color:var(--text)">$820K</div>
+            <div style="font-size:0.8rem;color:var(--text-muted)">Projected</div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:6px">
+              <span style="color:var(--text-muted)">Basic Plan — 280 schools</span>
+              <span style="font-weight:700">$13,720</span>
+            </div>
+            <div style="background:var(--border);border-radius:4px;height:7px;overflow:hidden">
+              <div style="width:20%;height:100%;background:#94a3b8;border-radius:4px"></div>
+            </div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:6px">
+              <span style="color:var(--text-muted)">Pro Plan — 170 schools</span>
+              <span style="font-weight:700">$25,330</span>
+            </div>
+            <div style="background:var(--border);border-radius:4px;height:7px;overflow:hidden">
+              <div style="width:37%;height:100%;background:var(--blue);border-radius:4px"></div>
+            </div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:6px">
+              <span style="color:var(--text-muted)">Enterprise Plan — 48 schools</span>
+              <span style="font-weight:700">$23,952</span>
+            </div>
+            <div style="background:var(--border);border-radius:4px;height:7px;overflow:hidden">
+              <div style="width:35%;height:100%;background:var(--gold);border-radius:4px"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+  // ── Date & Greeting ──
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  document.getElementById('greetSub').textContent =
+    `${greeting}, Super Admin · ${now.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric', year:'numeric'})}`;
+  document.getElementById('dateDisplay').textContent =
+    now.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+
+  // ── Sidebar mobile ──
+  function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('open');
+    document.getElementById('overlay').classList.toggle('show');
+  }
+
+  function closeSidebar() {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('overlay').classList.remove('show');
+  }
+
+  // ── Dark mode ──
+  let dark = false;
+  function toggleDark() {
+    dark = !dark;
+    document.documentElement.style.setProperty('--bg', dark ? '#0a0f1e' : '#f1f5fd');
+    document.documentElement.style.setProperty('--card', dark ? '#111827' : '#ffffff');
+    document.documentElement.style.setProperty('--border', dark ? 'rgba(255,255,255,0.08)' : '#e5e9f4');
+    document.documentElement.style.setProperty('--text', dark ? '#e2e8f0' : '#1e293b');
+    document.documentElement.style.setProperty('--text-muted', dark ? '#94a3b8' : '#64748b');
+  }
+
+  // ── Approve school ──
+  function approveSchool(btn, name) {
+    const row = btn.closest('tr');
+    row.style.opacity = '0.5';
+    setTimeout(() => row.remove(), 300);
+    showToast(`✅ ${name} approved successfully!`);
+  }
+
+  // ── Toast ──
+  function showToast(msg, color) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.style.background = color || 'var(--success)';
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+
+  // ── Logout ──
+  function logout() {
+    sessionStorage.clear();
+    window.location.href = 'login.html';
+  }
+</script>
+</body>
+</html>
