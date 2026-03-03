@@ -1,13 +1,13 @@
 // firebase-config.js
 // Campus Prime Firebase Configuration
 
-const firebaseConfig = {
-apiKey: "AIzaSyDIFLO7rwIJbJnAt2EV7m57ydkPfH9FQzA",
-authDomain: "campus-prime.firebaseapp.com",
-projectId: "campus-prime",
-storageBucket: "campus-prime.firebasestorage.app",
-messagingSenderId: "934780803109",
-appId: "1:934780803109:web:678a903369166ce72f07cc"
+ const firebaseConfig = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
 export default firebaseConfig;
