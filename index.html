@@ -1119,16 +1119,39 @@
     if (e.target === document.getElementById('registerModal')) closeModal();
   }
 
-  function submitRegistration(e) {
-    e.preventDefault();
-    const btn = e.target.querySelector('button[type="submit"]');
-    btn.textContent = 'Submitting...';
-    btn.disabled = true;
-    setTimeout(() => {
+   function submitRegistration(e) {
+  e.preventDefault();
+
+  const form = e.target;
+  const btn = form.querySelector('button[type="submit"]');
+  btn.textContent = "Submitting...";
+  btn.disabled = true;
+
+  const inputs = form.querySelectorAll("input, textarea");
+
+  const schoolData = {
+    schoolName: inputs[0].value,
+    principalName: inputs[1].value,
+    email: inputs[2].value,
+    phone: inputs[3].value,
+    city: inputs[4].value,
+    address: inputs[5].value,
+    password: inputs[6].value,
+    status: "pending",
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+
+  db.collection("schools").add(schoolData)
+    .then(() => {
       document.getElementById('formContent').style.display = 'none';
       document.getElementById('successMsg').classList.add('show');
-    }, 1500);
-  }
+    })
+    .catch((error) => {
+      alert("Error: " + error.message);
+      btn.textContent = "Create School Account →";
+      btn.disabled = false;
+    });
+   }
 
   // Billing toggle
   let isAnnual = false;
