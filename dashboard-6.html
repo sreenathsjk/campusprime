@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Campus Prime — Teacher Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import {
+  getFirestore, collection, getDocs, doc, addDoc, updateDoc,
+  serverTimestamp, onSnapshot, query, orderBy, where, limit, getDoc
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDIFLO7rwIJbJnAt2EV7m57ydkPfH9FQzA",
+  authDomain: "campus-prime.firebaseapp.com",
+  projectId: "campus-prime",
+  storageBucket: "campus-prime.firebasestorage.app",
+  messagingSenderId: "934780803109",
+  appId: "1:934780803109:web:678a903369166ce72f07cc"
+};
+
+const app  = initializeApp(firebaseConfig);
+const db   = getFirestore(app);
+const auth = getAuth(app);
+
+let SCHOOL_ID = null;
+let TEACHER_ID = null;
+let TEACHER_DATA = null;
+
+// ── AUTH GUARD ──
+onAuthStateChanged(auth, async user => {
+  if (!user) { window.location.href = '../admin/login.html'; return; }
+  const role = sessionStorage.getItem('cp_role');
+  if (role && role !== 'teacher') {
+    // Redirect to correct dashboard
+    if (role === 'super_admin' || role === 'school_admin') window.location.href = '../admin/index.html';
+    else if (role === 'student') window.location.href = '../student/dashboard.html';
+    return;
+  }
+
+  SCHOOL_ID = sessionStorage.getItem('cp_schoolId');
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('mainApp').style.display = 'block';
+  document.getElementById('teacherEmailEl').textContent = user.email;
+  document.getElementById('teacherNameEl').textContent = sessionStorage.getItem('cp_name') || user.email;
+
+  // Load teacher profile
+  await loadTeacherProfile(user);
+  loadDashboard();
+  listenAnnouncements();
+});
+
+async function loadTeacherProfile(user) {
+  try {
+    const userQ = query(collection(db,'users'), where('uid','==',user.uid));
+    const userSnap = await getDocs(userQ);
+    if (!userSnap.empty) {
+      const ud = userSnap.docs[0].data();
+      SCHOOL_ID = SCHOOL_ID || ud.schoolId;
+      sessionStorage.setItem('cp_schoolId', SCHOOL_ID);
+
+      // Find teacher record
+      if (SCHOOL_ID) {
+        const tSnap = await getDocs(query(collection(db,'teachers'),
+          where('schoolId','==',SCHOOL_ID), where('email','==',user.email)));
+        if (!tSnap.empty) {
+          TEACHER_DATA = tSnap.docs[0].data();
+          TEACHER_ID   = tSnap.docs[0].id;
+          document.getElementById('teacherNameEl').textContent = `${TEACHER_DATA.firstName} ${TEACHER_DATA.lastName}`;
+          document.getElementById('teacherSubjectsEl').textContent = TEACHER_DATA.subjects || '—';
+        }
+      }
+    }
+  } catch(e) { console.error('Profile error:', e); }
+}
+
+async function loadDashboard() {
+  if (!SCHOOL_ID) {
+    setEl('statStudents','—');
+    setEl('statSubjects','—');
+    return;
+  }
+  const studSnap = await getDocs(query(collection(db,'students'), where('schoolId','==',SCHOOL_ID)));
+  setEl('statStudents', studSnap.size);
+  setEl('statSubjects', TEACHER_DATA?.subjects ? TEACHER_DATA.subjects.split(',').length : 0);
+
+  // Today's attendance count
+  const today = new Date().toISOString().split('T')[0];
+  const attSnap = await getDocs(query(collection(db,'attendance'),
+    where('schoolId','==',SCHOOL_ID), where('date','==',today)));
+  setEl('statAttToday', attSnap.size + ' records');
+
+  // Load recent announcements preview
+  listenAnnouncements();
+}
+
+function listenAnnouncements() {
+  const q = query(collection(db,'announcements'), orderBy('createdAt','desc'), limit(5));
+  onSnapshot(q, snap => {
+    const list = document.getElementById('annList');
+    list.innerHTML = snap.empty
+      ? '<div style="text-align:center;padding:20px;color:var(--muted);font-size:.85rem">No announcements</div>'
+      : snap.docs.map(d => {
+          const a = d.data();
+          return `<div class="ann-item">
+            <div class="ann-title">${a.title}</div>
+            <div class="ann-meta">${a.target||'ALL'} · ${a.createdAt?.toDate?.()?.toLocaleDateString()||'—'}</div>
+            <div class="ann-body">${a.content}</div>
+          </div>`;
+        }).join('');
+  });
+}
+
+// ── ATTENDANCE ──
+window.loadStudentsForAtt = async () => {
+  if (!SCHOOL_ID) { showToast('No school linked to your account','error'); return; }
+  const date      = document.getElementById('attDate').value || new Date().toISOString().split('T')[0];
+  const className = document.getElementById('attClass').value.trim();
+  if (!className) { showToast('Enter a class name','error'); return; }
+
+  const studSnap = await getDocs(query(collection(db,'students'),
+    where('schoolId','==',SCHOOL_ID), where('className','==',className)));
+  const attSnap  = await getDocs(query(collection(db,'attendance'),
+    where('schoolId','==',SCHOOL_ID), where('date','==',date), where('className','==',className)));
+  const existing = {};
+  attSnap.forEach(d => { existing[d.data().studentId] = d.data().status; });
+
+  const tbody = document.getElementById('attTbody');
+  tbody.innerHTML = studSnap.empty
+    ? '<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--muted)">No students in this class</td></tr>'
+    : studSnap.docs.map(d => {
+        const s = d.data();
+        const status = existing[d.id] || 'present';
+        return `<tr>
+          <td>${s.firstName} ${s.lastName}</td>
+          <td>${s.admissionNo||'—'}</td>
+          <td><select id="tatt_${d.id}" style="padding:5px 10px;border-radius:8px;border:1px solid var(--bdr);font-family:inherit">
+            <option value="present" ${status==='present'?'selected':''}>Present</option>
+            <option value="absent"  ${status==='absent'?'selected':''}>Absent</option>
+            <option value="late"    ${status==='late'?'selected':''}>Late</option>
+            <option value="excused" ${status==='excused'?'selected':''}>Excused</option>
+          </select></td>
+        </tr>`;
+      }).join('');
+  window._tAttStudents = studSnap.docs.map(d=>({id:d.id, name:`${d.data().firstName} ${d.data().lastName}`}));
+  window._tAttDate = date; window._tAttClass = className;
+};
+
+window.saveAttendance = async () => {
+  if (!window._tAttStudents?.length) { showToast('Load students first','error'); return; }
+  const btn = document.getElementById('saveAttBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  try {
+    for (const st of window._tAttStudents) {
+      const status = document.getElementById('tatt_'+st.id)?.value || 'present';
+      const existing = await getDocs(query(collection(db,'attendance'),
+        where('schoolId','==',SCHOOL_ID), where('date','==',window._tAttDate), where('studentId','==',st.id)));
+      if (!existing.empty) {
+        await updateDoc(doc(db,'attendance',existing.docs[0].id), {status, updatedAt:serverTimestamp()});
+      } else {
+        await addDoc(collection(db,'attendance'), {
+          studentId:st.id, studentName:st.name,
+          className:window._tAttClass, date:window._tAttDate,
+          status, schoolId:SCHOOL_ID,
+          markedBy: sessionStorage.getItem('cp_email')||'teacher',
+          createdAt:serverTimestamp()
+        });
+      }
+    }
+    showToast('✅ Attendance saved!','success');
+  } catch(e) { showToast('Error: '+e.message,'error'); }
+  finally { btn.disabled=false; btn.textContent='💾 Save Attendance'; }
+};
+
+// ── MARKS ENTRY ──
+window.loadExamsForMarks = async () => {
+  if (!SCHOOL_ID) return;
+  const subject = document.getElementById('marksSubject').value.trim();
+  const q = subject
+    ? query(collection(db,'exams'), where('schoolId','==',SCHOOL_ID), where('subject','==',subject))
+    : query(collection(db,'exams'), where('schoolId','==',SCHOOL_ID), orderBy('createdAt','desc'), limit(10));
+  const snap = await getDocs(q);
+  const sel = document.getElementById('examSel');
+  sel.innerHTML = '<option value="">-- Select Exam --</option>' +
+    snap.docs.map(d=>`<option value="${d.id}|${d.data().className}">${d.data().title} (${d.data().className})</option>`).join('');
+};
+
+window.loadStudentsForMarks = async () => {
+  const val = document.getElementById('examSel').value;
+  if (!val) { showToast('Select an exam','error'); return; }
+  const [examId, className] = val.split('|');
+  const studSnap = await getDocs(query(collection(db,'students'),
+    where('schoolId','==',SCHOOL_ID), where('className','==',className)));
+  const resSnap = await getDocs(query(collection(db,'results'), where('examId','==',examId)));
+  const existing = {}; resSnap.forEach(d=>{ existing[d.data().studentId]={marks:d.data().marks,id:d.id}; });
+  const tbody = document.getElementById('marksTbody');
+  tbody.innerHTML = studSnap.empty
+    ? '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">No students in this class</td></tr>'
+    : studSnap.docs.map(d=>{
+        const s=d.data(); const ex=existing[d.id];
+        return `<tr>
+          <td>${s.firstName} ${s.lastName}</td>
+          <td>${s.admissionNo||'—'}</td>
+          <td><input type="number" id="tm_${d.id}" value="${ex?.marks||''}" min="0" max="100"
+            style="width:80px;padding:5px 8px;border-radius:8px;border:1px solid var(--bdr);font-family:inherit"/></td>
+        </tr>`;
+      }).join('');
+  window._tMarksStudents = studSnap.docs.map(d=>({id:d.id,name:`${d.data().firstName} ${d.data().lastName}`}));
+  window._tCurrentExam   = examId;
+  window._tExistingRes   = existing;
+};
+
+window.saveMarks = async () => {
+  if (!window._tMarksStudents?.length) { showToast('Load students first','error'); return; }
+  const btn = document.getElementById('saveMarksBtn');
+  btn.disabled=true; btn.textContent='Saving...';
+  try {
+    for (const st of window._tMarksStudents) {
+      const marks = parseInt(document.getElementById('tm_'+st.id)?.value||0);
+      const grade = marks>=90?'A+':marks>=80?'A':marks>=70?'B':marks>=60?'C':marks>=50?'D':'F';
+      const ex = window._tExistingRes[st.id];
+      const data = {examId:window._tCurrentExam, studentId:st.id, studentName:st.name,
+        marks, grade, schoolId:SCHOOL_ID, isPublished:false, updatedAt:serverTimestamp()};
+      if (ex?.id) await updateDoc(doc(db,'results',ex.id), data);
+      else { data.createdAt=serverTimestamp(); await addDoc(collection(db,'results'), data); }
+    }
+    showToast('✅ Marks saved!','success');
+  } catch(e) { showToast('Error: '+e.message,'error'); }
+  finally { btn.disabled=false; btn.textContent='💾 Save Marks'; }
+};
+
+// ── HELPERS ──
+window.logout = async () => { sessionStorage.clear(); await signOut(auth); window.location.href='../admin/login.html'; };
+function setEl(id,val){const el=document.getElementById(id);if(el)el.textContent=val;}
+function showSection(sec){
+  document.querySelectorAll('.section').forEach(s=>s.style.display='none');
+  document.getElementById('sec-'+sec).style.display='block';
+  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('act'));
+  document.querySelector(`[data-section="${sec}"]`)?.classList.add('act');
+}
+window.showSection=showSection;
+window.showDash=()=>{showSection('dashboard');loadDashboard();};
+window.showToast = function(msg,type='success'){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.style.background=type==='success'?'#10b981':'#ef4444';
+  t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),3500);
+};
+</script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --sw:230px;--sbg:#0a1628;
+  --green:#10b981;--blue:#3b82f6;--gold:#f59e0b;--err:#ef4444;
+  --bg:#f0fdf9;--card:#fff;--bdr:#d1fae5;--text:#1e293b;--muted:#64748b;
+  --grad:linear-gradient(135deg,#059669,#10b981);
+}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+#loadingScreen{position:fixed;inset:0;background:var(--sbg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999}
+.ll{font-family:'Syne',sans-serif;font-size:2rem;font-weight:800;color:#fff;margin-bottom:20px}.ll span{color:var(--green)}
+.lspin{width:38px;height:38px;border:3px solid rgba(255,255,255,.1);border-top-color:var(--green);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.lt{color:rgba(255,255,255,.4);font-size:.85rem;margin-top:14px}
+.sb{position:fixed;top:0;left:0;bottom:0;width:var(--sw);background:var(--sbg);display:flex;flex-direction:column;z-index:100;overflow-y:auto;transition:transform .3s}
+.sb-logo{padding:20px 18px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:10px}
+.lm{width:36px;height:36px;background:var(--grad);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:1rem;font-family:'Syne',sans-serif}
+.lt2{font-family:'Syne',sans-serif;font-weight:800;font-size:1rem;color:#fff}.lt2 span{color:var(--green)}
+.role-pill{margin-left:auto;background:rgba(16,185,129,.2);color:var(--green);font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:100px}
+.ns{padding:14px 10px 4px}
+.nsl{font-size:.6rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.25);padding:0 8px;margin-bottom:6px}
+.ni{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:all .2s;margin-bottom:2px;text-decoration:none;border:none;background:none;width:100%;text-align:left}
+.ni:hover{background:rgba(255,255,255,.06)}.ni.act{background:rgba(16,185,129,.2)}
+.nic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.85rem;flex-shrink:0;background:rgba(255,255,255,.05)}
+.ni.act .nic{background:rgba(16,185,129,.2)}
+.nl{font-size:.82rem;color:rgba(255,255,255,.6)}.ni.act .nl{color:#fff;font-weight:600}
+.sf{margin-top:auto;padding:12px 10px;border-top:1px solid rgba(255,255,255,.06)}
+.uc{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:rgba(255,255,255,.04)}
+.ua{width:34px;height:34px;border-radius:50%;background:var(--grad);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.8rem;flex-shrink:0}
+.un{font-size:.8rem;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px}
+.ur{font-size:.66rem;color:rgba(255,255,255,.4)}
+.lob{margin-left:auto;background:none;border:none;color:rgba(255,255,255,.3);cursor:pointer;font-size:1.1rem;flex-shrink:0}.lob:hover{color:var(--err)}
+.main{margin-left:var(--sw);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--card);border-bottom:1px solid var(--bdr);padding:0 20px;height:60px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:50}
+.mbtn{display:none;background:none;border:none;font-size:1.3rem;cursor:pointer}
+.ttl{font-family:'Syne',sans-serif;font-weight:700;font-size:1rem;color:var(--text)}
+.tr{margin-left:auto;display:flex;align-items:center;gap:8px}
+.gbadge{display:flex;align-items:center;gap:5px;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);border-radius:100px;padding:4px 10px;font-size:.7rem;font-weight:700;color:#065f46}
+.page{padding:20px;flex:1}
+.ph{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:12px}
+.pt{font-family:'Syne',sans-serif;font-weight:800;font-size:1.4rem;color:var(--text);margin-bottom:3px}
+.ps{font-size:.82rem;color:var(--muted)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:10px;font-family:'DM Sans',sans-serif;font-size:.82rem;font-weight:600;cursor:pointer;border:none;transition:all .2s;text-decoration:none}
+.btp{background:var(--grad);color:#fff}.btp:hover{transform:translateY(-1px)}
+.btg{background:var(--bg);border:1px solid var(--bdr);color:var(--text)}
+.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-bottom:20px}
+.sc{background:var(--card);border-radius:14px;padding:18px;border:1px solid var(--bdr);transition:transform .2s}
+.sc:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.06)}
+.st{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+.si{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1rem}
+.sv{font-family:'Syne',sans-serif;font-weight:800;font-size:1.8rem;color:var(--text);line-height:1;margin-bottom:4px}
+.sl{font-size:.75rem;color:var(--muted);font-weight:500}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+.card{background:var(--card);border-radius:14px;border:1px solid var(--bdr);overflow:hidden}
+.ch{padding:14px 18px;border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:center}
+.ct{font-family:'Syne',sans-serif;font-weight:700;font-size:.92rem;color:var(--text)}
+.cb{padding:18px}
+.sec-title{font-family:'Syne',sans-serif;font-weight:800;font-size:1.2rem;color:var(--text);margin-bottom:16px}
+.att-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.att-bar input,.att-bar select{padding:8px 12px;border:1.5px solid var(--bdr);border-radius:10px;font-family:'DM Sans',sans-serif;font-size:.82rem;color:var(--text);background:#fafbff;outline:none}
+.att-bar input:focus{border-color:var(--green)}
+table{width:100%;border-collapse:collapse}
+.tw{overflow-x:auto}
+thead th{padding:9px 14px;font-size:.65rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:left;background:var(--bg);border-bottom:1px solid var(--bdr);white-space:nowrap}
+tbody td{padding:11px 14px;font-size:.81rem;color:var(--text);border-bottom:1px solid var(--bdr);vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:#f0fdf9}
+.abtn{padding:4px 9px;border-radius:6px;font-size:.7rem;font-weight:600;cursor:pointer;border:1px solid var(--bdr);background:var(--bg);color:var(--text);transition:all .2s;margin-right:3px}
+.abtn:hover{background:var(--green);color:#fff;border-color:var(--green)}
+.badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:100px;font-size:.68rem;font-weight:700}
+.b-ok{background:rgba(16,185,129,.1);color:var(--green)}
+.b-err{background:rgba(239,68,68,.1);color:var(--err)}
+.ann-item{padding:14px;border-bottom:1px solid var(--bdr);background:var(--card)}
+.ann-item:last-child{border-bottom:none}
+.ann-title{font-weight:700;font-size:.9rem;color:var(--text);margin-bottom:3px}
+.ann-meta{font-size:.7rem;color:var(--muted);margin-bottom:6px}
+.ann-body{font-size:.83rem;color:var(--text);line-height:1.6}
+.toast{position:fixed;bottom:20px;right:20px;color:#fff;padding:11px 18px;border-radius:12px;font-size:.82rem;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.2);z-index:999;transform:translateY(80px);opacity:0;transition:all .3s;max-width:280px}
+.toast.show{transform:translateY(0);opacity:1}
+.ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99}.ov.show{display:block}
+@media(max-width:860px){
+  .sb{transform:translateX(-100%)}.sb.open{transform:translateX(0)}
+  .main{margin-left:0}.mbtn{display:flex}
+  .g2{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div id="loadingScreen">
+  <div class="ll">Campus<span>Prime</span></div>
+  <div class="lspin"></div>
+  <div class="lt">Loading teacher portal...</div>
+</div>
+
+<div id="mainApp" style="display:none">
+<div class="ov" id="ov" onclick="this.classList.remove('show');document.getElementById('sb').classList.remove('open')"></div>
+
+<!-- SIDEBAR -->
+<aside class="sb" id="sb">
+  <div class="sb-logo">
+    <div class="lm">C</div>
+    <div class="lt2">Campus<span>Prime</span></div>
+    <span class="role-pill">Teacher</span>
+  </div>
+  <div class="ns">
+    <div class="nsl">Main</div>
+    <button class="ni act" data-section="dashboard" onclick="showDash()"><div class="nic">📊</div><span class="nl">Dashboard</span></button>
+    <button class="ni" data-section="attendance" onclick="showSection('attendance')"><div class="nic">✅</div><span class="nl">Attendance</span></button>
+    <button class="ni" data-section="marks" onclick="showSection('marks')"><div class="nic">📝</div><span class="nl">Enter Marks</span></button>
+    <button class="ni" data-section="announcements" onclick="showSection('announcements')"><div class="nic">📢</div><span class="nl">Announcements</span></button>
+  </div>
+  <div class="sf">
+    <div class="uc">
+      <div class="ua">T</div>
+      <div style="flex:1;min-width:0"><div class="un" id="teacherNameEl">Teacher</div><div class="ur" id="teacherEmailEl">Loading...</div></div>
+      <button class="lob" onclick="logout()" title="Logout">⇥</button>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+  <header class="topbar">
+    <button class="mbtn" onclick="document.getElementById('sb').classList.toggle('open');document.getElementById('ov').classList.toggle('show')">☰</button>
+    <div class="ttl">Teacher Dashboard</div>
+    <div class="tr"><div class="gbadge">🟢 Firebase Live</div></div>
+  </header>
+
+  <div class="page">
+
+    <!-- DASHBOARD -->
+    <div class="section" id="sec-dashboard">
+      <div class="ph">
+        <div><div class="pt" id="teachGreet">Good day 👋</div><div class="ps">Subjects: <span id="teacherSubjectsEl">Loading...</span></div></div>
+      </div>
+      <div class="sg">
+        <div class="sc"><div class="st"><div class="si" style="background:rgba(16,185,129,.1)">👨‍🎓</div></div><div class="sv" id="statStudents">—</div><div class="sl">School Students</div></div>
+        <div class="sc"><div class="st"><div class="si" style="background:rgba(59,130,246,.1)">📚</div></div><div class="sv" id="statSubjects">—</div><div class="sl">My Subjects</div></div>
+        <div class="sc"><div class="st"><div class="si" style="background:rgba(245,158,11,.1)">✅</div></div><div class="sv" id="statAttToday">—</div><div class="sl">Attendance Today</div></div>
+      </div>
+      <div class="g2">
+        <div class="card">
+          <div class="ch"><div class="ct">📢 Recent Announcements</div></div>
+          <div id="annList"><div style="text-align:center;padding:20px;color:var(--muted);font-size:.85rem">Loading...</div></div>
+        </div>
+        <div class="card">
+          <div class="ch"><div class="ct">📌 Quick Actions</div></div>
+          <div class="cb" style="display:flex;flex-direction:column;gap:10px">
+            <button class="btn btp" onclick="showSection('attendance')" style="justify-content:center">✅ Mark Attendance</button>
+            <button class="btn btp" onclick="showSection('marks')" style="justify-content:center">📝 Enter Exam Marks</button>
+            <button class="btn btg" onclick="showSection('announcements')" style="justify-content:center">📢 View Announcements</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ATTENDANCE -->
+    <div class="section" id="sec-attendance" style="display:none">
+      <div class="sec-title">✅ Mark Attendance</div>
+      <div class="card">
+        <div class="ch"><div class="ct">Mark Attendance</div></div>
+        <div class="cb">
+          <div class="att-bar">
+            <input type="date" id="attDate"/>
+            <input type="text" id="attClass" placeholder="Class (e.g. Grade 10A)" style="min-width:170px"/>
+            <button class="btn btp" onclick="loadStudentsForAtt()">Load Students</button>
+            <button class="btn btg" id="saveAttBtn" onclick="saveAttendance()">💾 Save Attendance</button>
+          </div>
+          <div class="tw"><table>
+            <thead><tr><th>Student</th><th>Admission No</th><th>Status</th></tr></thead>
+            <tbody id="attTbody"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Enter a class and date, then click Load Students</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MARKS -->
+    <div class="section" id="sec-marks" style="display:none">
+      <div class="sec-title">📝 Enter Exam Marks</div>
+      <div class="card">
+        <div class="ch"><div class="ct">Select Exam</div></div>
+        <div class="cb">
+          <div class="att-bar" style="margin-bottom:10px">
+            <input type="text" id="marksSubject" placeholder="Filter by subject (optional)" style="min-width:200px"/>
+            <button class="btn btg" onclick="loadExamsForMarks()">🔍 Search Exams</button>
+          </div>
+          <div style="margin-bottom:14px">
+            <select id="examSel" style="width:100%;padding:10px 12px;border:1.5px solid var(--bdr);border-radius:10px;font-family:inherit;font-size:.85rem;background:#fafbff">
+              <option value="">-- Search exams above, then select --</option>
+            </select>
+          </div>
+          <button class="btn btp" onclick="loadStudentsForMarks()" style="margin-bottom:16px">Load Students</button>
+          <div class="tw"><table>
+            <thead><tr><th>Student</th><th>Admission No</th><th>Marks (out of 100)</th></tr></thead>
+            <tbody id="marksTbody"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Select an exam and click Load Students</td></tr></tbody>
+          </table></div>
+          <div style="margin-top:14px;text-align:right">
+            <button class="btn btp" id="saveMarksBtn" onclick="saveMarks()">💾 Save Marks</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ANNOUNCEMENTS -->
+    <div class="section" id="sec-announcements" style="display:none">
+      <div class="sec-title">📢 Announcements</div>
+      <div class="card" id="annFull">
+        <div id="annFullList"><div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const h = new Date().getHours();
+  const g = h<12?'Good morning':h<17?'Good afternoon':'Good evening';
+  const gEl = document.getElementById('teachGreet');
+  if(gEl) gEl.textContent = g + ', ' + (sessionStorage.getItem('cp_name')||'Teacher') + ' 👋';
+
+  const attDate = document.getElementById('attDate');
+  if(attDate) attDate.value = new Date().toISOString().split('T')[0];
+</script>
+</body>
+</html>
