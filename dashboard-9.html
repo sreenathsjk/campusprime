@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Campus Prime — Student Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import {
+  getFirestore, collection, getDocs, doc,
+  onSnapshot, query, orderBy, where, limit, getDoc
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDIFLO7rwIJbJnAt2EV7m57ydkPfH9FQzA",
+  authDomain: "campus-prime.firebaseapp.com",
+  projectId: "campus-prime",
+  storageBucket: "campus-prime.firebasestorage.app",
+  messagingSenderId: "934780803109",
+  appId: "1:934780803109:web:678a903369166ce72f07cc"
+};
+
+const app  = initializeApp(firebaseConfig);
+const db   = getFirestore(app);
+const auth = getAuth(app);
+
+let SCHOOL_ID  = null;
+let STUDENT_ID = null;
+let STUDENT_DATA = null;
+
+// ── AUTH GUARD ──
+onAuthStateChanged(auth, async user => {
+  if (!user) { window.location.href = '../admin/login.html'; return; }
+  const role = sessionStorage.getItem('cp_role');
+  if (role && role !== 'student') {
+    if (role === 'super_admin' || role === 'school_admin') window.location.href = '../admin/index.html';
+    else if (role === 'teacher') window.location.href = '../teacher/dashboard.html';
+    return;
+  }
+
+  SCHOOL_ID = sessionStorage.getItem('cp_schoolId');
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('mainApp').style.display = 'block';
+  document.getElementById('studentEmailEl').textContent = user.email;
+  document.getElementById('studentNameEl').textContent = sessionStorage.getItem('cp_name') || user.email;
+
+  await loadStudentProfile(user);
+  loadDashboard();
+  listenAnnouncements();
+});
+
+async function loadStudentProfile(user) {
+  try {
+    const userQ = query(collection(db,'users'), where('uid','==',user.uid));
+    const userSnap = await getDocs(userQ);
+    if (!userSnap.empty) {
+      const ud = userSnap.docs[0].data();
+      SCHOOL_ID = SCHOOL_ID || ud.schoolId;
+      sessionStorage.setItem('cp_schoolId', SCHOOL_ID||'');
+
+      if (SCHOOL_ID) {
+        const sSnap = await getDocs(query(collection(db,'students'),
+          where('schoolId','==',SCHOOL_ID), where('email','==',user.email)));
+        if (!sSnap.empty) {
+          STUDENT_DATA = sSnap.docs[0].data();
+          STUDENT_ID   = sSnap.docs[0].id;
+          document.getElementById('studentNameEl').textContent = `${STUDENT_DATA.firstName} ${STUDENT_DATA.lastName}`;
+          document.getElementById('studentClassEl').textContent = STUDENT_DATA.className || '—';
+          document.getElementById('profileName').textContent    = `${STUDENT_DATA.firstName} ${STUDENT_DATA.lastName}`;
+          document.getElementById('profileAdmNo').textContent   = STUDENT_DATA.admissionNo || '—';
+          document.getElementById('profileClass').textContent   = STUDENT_DATA.className || '—';
+          document.getElementById('profileEmail').textContent   = STUDENT_DATA.email || user.email;
+          document.getElementById('profilePhone').textContent   = STUDENT_DATA.phone || '—';
+          document.getElementById('profileGender').textContent  = STUDENT_DATA.gender || '—';
+          document.getElementById('profileDob').textContent     = STUDENT_DATA.dob || '—';
+        }
+      }
+    }
+  } catch(e) { console.error('Profile load error:', e); }
+}
+
+async function loadDashboard() {
+  if (!STUDENT_ID) return;
+
+  // Attendance summary (last 30 days)
+  const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate()-30);
+  const attSnap = await getDocs(query(collection(db,'attendance'),
+    where('studentId','==',STUDENT_ID), where('date','>=',thirtyDaysAgo.toISOString().split('T')[0])));
+  const attDays = attSnap.size;
+  const present = attSnap.docs.filter(d=>d.data().status==='present').length;
+  const attPct  = attDays ? Math.round((present/attDays)*100) : 0;
+  setEl('statAttPct', attPct + '%');
+  setEl('statAttDays', present + '/' + attDays + ' days');
+
+  // Fee summary
+  const feeSnap = await getDocs(query(collection(db,'fees'), where('studentId','==',STUDENT_ID)));
+  const pending = feeSnap.docs.filter(d=>d.data().status==='pending').length;
+  const paid    = feeSnap.docs.filter(d=>d.data().status==='paid').length;
+  setEl('statFeesPending', pending);
+  setEl('statFeesPaid', paid + ' paid');
+
+  // Results summary
+  const resSnap = await getDocs(query(collection(db,'results'), where('studentId','==',STUDENT_ID)));
+  const avgMarks = resSnap.size
+    ? Math.round(resSnap.docs.reduce((n,d)=>n+(d.data().marks||0),0)/resSnap.size)
+    : 0;
+  setEl('statAvgMarks', avgMarks + '%');
+  setEl('statExamsTaken', resSnap.size + ' exams');
+}
+
+function listenAnnouncements() {
+  const q = query(collection(db,'announcements'), orderBy('createdAt','desc'), limit(10));
+  onSnapshot(q, snap => {
+    const list = document.getElementById('annList');
+    list.innerHTML = snap.empty
+      ? '<div style="text-align:center;padding:20px;color:var(--muted);font-size:.85rem">No announcements</div>'
+      : snap.docs.map(d => {
+          const a = d.data();
+          return `<div class="ann-item">
+            <div class="ann-title">${a.title}</div>
+            <div class="ann-meta">${a.target||'ALL'} · ${a.createdAt?.toDate?.()?.toLocaleDateString()||'—'}</div>
+            <div class="ann-body">${a.content}</div>
+          </div>`;
+        }).join('');
+  });
+}
+
+// ── ATTENDANCE TAB ──
+window.loadMyAttendance = async () => {
+  showSection('attendance');
+  if (!STUDENT_ID) { showToast('Student profile not found','error'); return; }
+  const snap = await getDocs(query(collection(db,'attendance'),
+    where('studentId','==',STUDENT_ID), orderBy('date','desc'), limit(60)));
+  const tbody = document.getElementById('myAttTbody');
+  tbody.innerHTML = snap.empty
+    ? '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">No attendance records yet</td></tr>'
+    : snap.docs.map(d => {
+        const a = d.data();
+        const badge = {present:'b-ok',absent:'b-err',late:'b-warn',excused:'b-info'}[a.status]||'b-info';
+        return `<tr>
+          <td>${a.date||'—'}</td>
+          <td>${a.className||'—'}</td>
+          <td><span class="badge ${badge}">${a.status||'—'}</span></td>
+        </tr>`;
+      }).join('');
+};
+
+// ── RESULTS TAB ──
+window.loadMyResults = async () => {
+  showSection('results');
+  if (!STUDENT_ID) { showToast('Student profile not found','error'); return; }
+  const snap = await getDocs(query(collection(db,'results'),
+    where('studentId','==',STUDENT_ID), orderBy('createdAt','desc')));
+  const tbody = document.getElementById('myResultsTbody');
+  tbody.innerHTML = snap.empty
+    ? '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">No results yet</td></tr>'
+    : snap.docs.map(d => {
+        const r = d.data();
+        const gColor = {A:'#2563eb','A+':'#059669',B:'#7c3aed',C:'#d97706',D:'#ea580c',F:'#dc2626'}[r.grade]||'#64748b';
+        return `<tr>
+          <td>${r.examId||'—'}</td>
+          <td>${r.marks||0} / 100</td>
+          <td><span class="badge" style="background:${gColor}15;color:${gColor}">${r.grade||'—'}</span></td>
+        </tr>`;
+      }).join('');
+};
+
+// ── FEES TAB ──
+window.loadMyFees = async () => {
+  showSection('fees');
+  if (!STUDENT_ID) { showToast('Student profile not found','error'); return; }
+  const snap = await getDocs(query(collection(db,'fees'),
+    where('studentId','==',STUDENT_ID), orderBy('createdAt','desc')));
+  const tbody = document.getElementById('myFeesTbody');
+  tbody.innerHTML = snap.empty
+    ? '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">No fee records yet</td></tr>'
+    : snap.docs.map(d => {
+        const f = d.data();
+        return `<tr>
+          <td>${f.feeType||'—'}</td>
+          <td>$${f.amount||0}</td>
+          <td>${f.dueDate||'—'}</td>
+          <td><span class="badge ${f.status==='paid'?'b-ok':f.status==='overdue'?'b-err':'b-warn'}">${f.status||'pending'}</span></td>
+        </tr>`;
+      }).join('');
+};
+
+// ── HELPERS ──
+window.logout = async () => { sessionStorage.clear(); await signOut(auth); window.location.href='../admin/login.html'; };
+function setEl(id,val){const el=document.getElementById(id);if(el)el.textContent=val;}
+function showSection(sec){
+  document.querySelectorAll('.section').forEach(s=>s.style.display='none');
+  document.getElementById('sec-'+sec).style.display='block';
+  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('act'));
+  document.querySelector(`[data-section="${sec}"]`)?.classList.add('act');
+}
+window.showSection=showSection;
+window.showDash=()=>{showSection('dashboard');loadDashboard();};
+window.showToast = function(msg,type='success'){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.style.background=type==='success'?'#10b981':'#ef4444';
+  t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),3500);
+};
+</script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --sw:230px;--sbg:#1a0a2e;
+  --pur:#8b5cf6;--blue:#3b82f6;--ok:#10b981;--err:#ef4444;--gold:#f59e0b;
+  --bg:#faf5ff;--card:#fff;--bdr:#ede9fe;--text:#1e293b;--muted:#64748b;
+  --grad:linear-gradient(135deg,#7c3aed,#8b5cf6);
+}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+#loadingScreen{position:fixed;inset:0;background:var(--sbg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999}
+.ll{font-family:'Inter',sans-serif;font-size:2rem;font-weight:800;color:#fff;margin-bottom:20px}.ll span{color:var(--pur)}
+.lspin{width:38px;height:38px;border:3px solid rgba(255,255,255,.1);border-top-color:var(--pur);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.lt{color:rgba(255,255,255,.4);font-size:.85rem;margin-top:14px}
+.sb{position:fixed;top:0;left:0;bottom:0;width:var(--sw);background:var(--sbg);display:flex;flex-direction:column;z-index:100;overflow-y:auto;transition:transform .3s}
+.sb-logo{padding:20px 18px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:10px}
+.lm{width:36px;height:36px;background:var(--grad);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:1rem;font-family:'Inter',sans-serif}
+.lt2{font-family:'Inter',sans-serif;font-weight:800;font-size:1rem;color:#fff}.lt2 span{color:var(--pur)}
+.role-pill{margin-left:auto;background:rgba(139,92,246,.2);color:var(--pur);font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:100px}
+.ns{padding:14px 10px 4px}
+.nsl{font-size:.6rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.25);padding:0 8px;margin-bottom:6px}
+.ni{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:all .2s;margin-bottom:2px;text-decoration:none;border:none;background:none;width:100%;text-align:left}
+.ni:hover{background:rgba(255,255,255,.06)}.ni.act{background:rgba(139,92,246,.2)}
+.nic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.85rem;flex-shrink:0;background:rgba(255,255,255,.05)}
+.ni.act .nic{background:rgba(139,92,246,.2)}
+.nl{font-size:.82rem;color:rgba(255,255,255,.6)}.ni.act .nl{color:#fff;font-weight:600}
+.sf{margin-top:auto;padding:12px 10px;border-top:1px solid rgba(255,255,255,.06)}
+.uc{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:rgba(255,255,255,.04)}
+.ua{width:34px;height:34px;border-radius:50%;background:var(--grad);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.8rem;flex-shrink:0}
+.un{font-size:.8rem;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px}
+.ur{font-size:.66rem;color:rgba(255,255,255,.4)}
+.lob{margin-left:auto;background:none;border:none;color:rgba(255,255,255,.3);cursor:pointer;font-size:1.1rem;flex-shrink:0}.lob:hover{color:var(--err)}
+.main{margin-left:var(--sw);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--card);border-bottom:1px solid var(--bdr);padding:0 20px;height:60px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:50}
+.mbtn{display:none;background:none;border:none;font-size:1.3rem;cursor:pointer}
+.ttl{font-family:'Inter',sans-serif;font-weight:700;font-size:1rem;color:var(--text)}
+.tr{margin-left:auto}
+.pbadge{display:flex;align-items:center;gap:5px;background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.2);border-radius:100px;padding:4px 10px;font-size:.7rem;font-weight:700;color:#6d28d9}
+.page{padding:20px;flex:1}
+.ph{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:12px}
+.pt{font-family:'Inter',sans-serif;font-weight:800;font-size:1.4rem;color:var(--text);margin-bottom:3px}
+.ps{font-size:.82rem;color:var(--muted)}
+.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-bottom:20px}
+.sc{background:var(--card);border-radius:14px;padding:18px;border:1px solid var(--bdr);transition:transform .2s}
+.sc:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.06)}
+.st{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+.si{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1rem}
+.sv{font-family:'Inter',sans-serif;font-weight:800;font-size:1.8rem;color:var(--text);line-height:1;margin-bottom:4px}
+.sv-sub{font-size:.72rem;color:var(--muted);margin-top:2px}
+.sl{font-size:.75rem;color:var(--muted);font-weight:500}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+.card{background:var(--card);border-radius:14px;border:1px solid var(--bdr);overflow:hidden}
+.ch{padding:14px 18px;border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:center}
+.ct{font-family:'Inter',sans-serif;font-weight:700;font-size:.92rem;color:var(--text)}
+.cb{padding:18px}
+.sec-title{font-family:'Inter',sans-serif;font-weight:800;font-size:1.2rem;color:var(--text);margin-bottom:16px}
+table{width:100%;border-collapse:collapse}
+.tw{overflow-x:auto}
+thead th{padding:9px 14px;font-size:.65rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:left;background:var(--bg);border-bottom:1px solid var(--bdr);white-space:nowrap}
+tbody td{padding:11px 14px;font-size:.81rem;color:var(--text);border-bottom:1px solid var(--bdr);vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:#faf5ff}
+.badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:100px;font-size:.68rem;font-weight:700}
+.b-ok{background:rgba(16,185,129,.1);color:var(--ok)}
+.b-err{background:rgba(239,68,68,.1);color:var(--err)}
+.b-warn{background:rgba(245,158,11,.1);color:var(--gold)}
+.b-info{background:rgba(59,130,246,.1);color:var(--blue)}
+.ann-item{padding:14px;border-bottom:1px solid var(--bdr)}
+.ann-item:last-child{border-bottom:none}
+.ann-title{font-weight:700;font-size:.9rem;color:var(--text);margin-bottom:3px}
+.ann-meta{font-size:.7rem;color:var(--muted);margin-bottom:6px}
+.ann-body{font-size:.83rem;color:var(--text);line-height:1.6}
+.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.prow{display:flex;flex-direction:column;gap:3px;padding:12px;background:var(--bg);border-radius:10px}
+.plbl{font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.pval{font-size:.9rem;color:var(--text);font-weight:500}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:10px;font-family:'Inter',sans-serif;font-size:.82rem;font-weight:600;cursor:pointer;border:none;background:var(--grad);color:#fff;text-decoration:none;transition:all .2s}
+.toast{position:fixed;bottom:20px;right:20px;color:#fff;padding:11px 18px;border-radius:12px;font-size:.82rem;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.2);z-index:999;transform:translateY(80px);opacity:0;transition:all .3s;max-width:280px}
+.toast.show{transform:translateY(0);opacity:1}
+.ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99}.ov.show{display:block}
+@media(max-width:860px){
+  .sb{transform:translateX(-100%)}.sb.open{transform:translateX(0)}
+  .main{margin-left:0}.mbtn{display:flex}
+  .g2{grid-template-columns:1fr}
+  .profile-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div id="loadingScreen">
+  <div class="ll">Campus<span>Prime</span></div>
+  <div class="lspin"></div>
+  <div class="lt">Loading student portal...</div>
+</div>
+
+<div id="mainApp" style="display:none">
+<div class="ov" id="ov" onclick="this.classList.remove('show');document.getElementById('sb').classList.remove('open')"></div>
+
+<!-- SIDEBAR -->
+<aside class="sb" id="sb">
+  <div class="sb-logo">
+    <div class="lm">C</div>
+    <div class="lt2">Campus<span>Prime</span></div>
+    <span class="role-pill">Student</span>
+  </div>
+  <div class="ns">
+    <div class="nsl">My Portal</div>
+    <button class="ni act" data-section="dashboard" onclick="showDash()"><div class="nic">📊</div><span class="nl">Dashboard</span></button>
+    <button class="ni" data-section="attendance" onclick="loadMyAttendance()"><div class="nic">✅</div><span class="nl">My Attendance</span></button>
+    <button class="ni" data-section="results" onclick="loadMyResults()"><div class="nic">📝</div><span class="nl">My Results</span></button>
+    <button class="ni" data-section="fees" onclick="loadMyFees()"><div class="nic">💰</div><span class="nl">My Fees</span></button>
+    <button class="ni" data-section="announcements" onclick="showSection('announcements')"><div class="nic">📢</div><span class="nl">Announcements</span></button>
+    <button class="ni" data-section="profile" onclick="showSection('profile')"><div class="nic">👤</div><span class="nl">My Profile</span></button>
+  </div>
+  <div class="sf">
+    <div class="uc">
+      <div class="ua">S</div>
+      <div style="flex:1;min-width:0">
+        <div class="un" id="studentNameEl">Student</div>
+        <div class="ur" id="studentEmailEl">Loading...</div>
+      </div>
+      <button class="lob" onclick="logout()" title="Logout">⇥</button>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+  <header class="topbar">
+    <button class="mbtn" onclick="document.getElementById('sb').classList.toggle('open');document.getElementById('ov').classList.toggle('show')">☰</button>
+    <div class="ttl">Student Portal — <span id="studentClassEl">—</span></div>
+    <div class="tr"><div class="pbadge">🎓 Student</div></div>
+  </header>
+
+  <div class="page">
+
+    <!-- DASHBOARD -->
+    <div class="section" id="sec-dashboard">
+      <div class="ph">
+        <div><div class="pt" id="studGreet">Good day 👋</div><div class="ps">Your academic overview</div></div>
+      </div>
+      <div class="sg">
+        <div class="sc">
+          <div class="st"><div class="si" style="background:rgba(16,185,129,.1)">✅</div></div>
+          <div class="sv" id="statAttPct">—</div>
+          <div class="sv-sub" id="statAttDays">—</div>
+          <div class="sl">Attendance (30 days)</div>
+        </div>
+        <div class="sc">
+          <div class="st"><div class="si" style="background:rgba(239,68,68,.1)">💰</div></div>
+          <div class="sv" id="statFeesPending">—</div>
+          <div class="sv-sub" id="statFeesPaid">—</div>
+          <div class="sl">Pending Fees</div>
+        </div>
+        <div class="sc">
+          <div class="st"><div class="si" style="background:rgba(139,92,246,.1)">📝</div></div>
+          <div class="sv" id="statAvgMarks">—</div>
+          <div class="sv-sub" id="statExamsTaken">—</div>
+          <div class="sl">Average Score</div>
+        </div>
+      </div>
+      <div class="g2">
+        <div class="card">
+          <div class="ch"><div class="ct">📢 Announcements</div></div>
+          <div id="annList"><div style="text-align:center;padding:20px;color:var(--muted);font-size:.85rem">Loading...</div></div>
+        </div>
+        <div class="card">
+          <div class="ch"><div class="ct">📌 Quick Access</div></div>
+          <div class="cb" style="display:flex;flex-direction:column;gap:10px">
+            <button class="btn" onclick="loadMyAttendance()" style="justify-content:center;background:var(--grad)">✅ View Attendance</button>
+            <button class="btn" onclick="loadMyResults()" style="justify-content:center;background:linear-gradient(135deg,#2563eb,#3b82f6)">📝 View Results</button>
+            <button class="btn" onclick="loadMyFees()" style="justify-content:center;background:linear-gradient(135deg,#d97706,#f59e0b)">💰 View Fees</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ATTENDANCE -->
+    <div class="section" id="sec-attendance" style="display:none">
+      <div class="sec-title">✅ My Attendance</div>
+      <div class="card"><div class="tw"><table>
+        <thead><tr><th>Date</th><th>Class</th><th>Status</th></tr></thead>
+        <tbody id="myAttTbody"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody>
+      </table></div></div>
+    </div>
+
+    <!-- RESULTS -->
+    <div class="section" id="sec-results" style="display:none">
+      <div class="sec-title">📝 My Results</div>
+      <div class="card"><div class="tw"><table>
+        <thead><tr><th>Exam</th><th>Marks</th><th>Grade</th></tr></thead>
+        <tbody id="myResultsTbody"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody>
+      </table></div></div>
+    </div>
+
+    <!-- FEES -->
+    <div class="section" id="sec-fees" style="display:none">
+      <div class="sec-title">💰 My Fees</div>
+      <div class="card"><div class="tw"><table>
+        <thead><tr><th>Fee Type</th><th>Amount</th><th>Due Date</th><th>Status</th></tr></thead>
+        <tbody id="myFeesTbody"><tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody>
+      </table></div></div>
+    </div>
+
+    <!-- ANNOUNCEMENTS -->
+    <div class="section" id="sec-announcements" style="display:none">
+      <div class="sec-title">📢 Announcements</div>
+      <div class="card" id="annFull">
+        <div id="annList2"><div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div></div>
+      </div>
+    </div>
+
+    <!-- PROFILE -->
+    <div class="section" id="sec-profile" style="display:none">
+      <div class="sec-title">👤 My Profile</div>
+      <div class="card">
+        <div class="ch"><div class="ct">Student Information</div></div>
+        <div class="cb">
+          <div class="profile-grid">
+            <div class="prow"><span class="plbl">Full Name</span><span class="pval" id="profileName">—</span></div>
+            <div class="prow"><span class="plbl">Admission No</span><span class="pval" id="profileAdmNo">—</span></div>
+            <div class="prow"><span class="plbl">Class</span><span class="pval" id="profileClass">—</span></div>
+            <div class="prow"><span class="plbl">Email</span><span class="pval" id="profileEmail">—</span></div>
+            <div class="prow"><span class="plbl">Phone</span><span class="pval" id="profilePhone">—</span></div>
+            <div class="prow"><span class="plbl">Gender</span><span class="pval" id="profileGender">—</span></div>
+            <div class="prow"><span class="plbl">Date of Birth</span><span class="pval" id="profileDob">—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const h = new Date().getHours();
+  const g = h<12?'Good morning':h<17?'Good afternoon':'Good evening';
+  const el = document.getElementById('studGreet');
+  if(el) el.textContent = g + ', ' + (sessionStorage.getItem('cp_name')||'Student') + ' 👋';
+</script>
+</body>
+</html>
