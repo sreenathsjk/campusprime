@@ -1,0 +1,1754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Campus Prime — Admin Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import {
+  getFirestore, collection, getDocs, doc, addDoc, updateDoc, deleteDoc,
+  serverTimestamp, onSnapshot, query, orderBy, where, limit, getDoc
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDIFLO7rwIJbJnAt2EV7m57ydkPfH9FQzA",
+  authDomain: "campus-prime.firebaseapp.com",
+  projectId: "campus-prime",
+  storageBucket: "campus-prime.firebasestorage.app",
+  messagingSenderId: "934780803109",
+  appId: "1:934780803109:web:678a903369166ce72f07cc"
+};
+
+const app  = initializeApp(firebaseConfig);
+const db   = getFirestore(app);
+const auth = getAuth(app);
+
+let SCHOOL_ID = null;
+let USER_ROLE = null;
+
+// ── AUTH GUARD ──
+onAuthStateChanged(auth, async user => {
+  if (!user) { window.location.href = 'login.html'; return; }
+
+  USER_ROLE = sessionStorage.getItem('cp_role') || 'super_admin';
+  SCHOOL_ID = sessionStorage.getItem('cp_schoolId') || null;
+
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('mainApp').style.display = 'block';
+  document.getElementById('adminEmailEl').textContent = user.email;
+  document.getElementById('adminNameEl').textContent = sessionStorage.getItem('cp_name') || user.email;
+
+  // Show/hide super admin only elements
+  if (USER_ROLE === 'super_admin') {
+    document.querySelectorAll('.super-only').forEach(el => el.style.display = '');
+    document.getElementById('dashTitle').textContent = 'Super Admin Dashboard';
+  } else {
+    document.querySelectorAll('.super-only').forEach(el => el.style.display = 'none');
+    document.getElementById('dashTitle').textContent = 'School Admin Dashboard';
+  }
+
+  loadDashboard();
+  listenNotifications();
+});
+
+// ── DASHBOARD ──
+async function loadDashboard() {
+  try {
+    if (USER_ROLE === 'super_admin') {
+      // Super admin: show super grid, hide school cards
+      const superGrid = document.getElementById('superDashGrid');
+      const schoolCards = document.getElementById('schoolDashCards');
+      if (superGrid) superGrid.style.display = '';
+      if (schoolCards) schoolCards.style.display = 'none';
+      // Update stat label
+      const lbl = document.getElementById('statPendingLabel');
+      if (lbl) lbl.textContent = 'Pending';
+      await loadSuperAdminStats();
+      await loadPendingSchools();
+    } else {
+      // School admin: show school cards, hide super grid
+      const superGrid = document.getElementById('superDashGrid');
+      const schoolCards = document.getElementById('schoolDashCards');
+      if (superGrid) superGrid.style.display = 'none';
+      if (schoolCards) schoolCards.style.display = 'block';
+      // Update stat label
+      const lbl = document.getElementById('statPendingLabel');
+      if (lbl) lbl.textContent = 'Pending Fees';
+      await loadSchoolStats();
+      await loadSchoolDashboardCards();
+    }
+  } catch(e) { showToast('Error loading dashboard: ' + e.message, 'error'); }
+}
+
+async function loadSuperAdminStats() {
+  const schoolsSnap = await getDocs(collection(db, 'schools'));
+  const schools = schoolsSnap.docs.map(d => ({id:d.id,...d.data()}));
+  const usersSnap  = await getDocs(collection(db, 'users'));
+
+  setEl('statTotal', schools.length);
+  setEl('statApproved', schools.filter(s=>s.status==='approved').length);
+  setEl('statPending', schools.filter(s=>s.status==='pending').length);
+  const totalStudents = schools.reduce((n,s)=>n+(s.studentCount||0),0);
+  const totalTeachers = schools.reduce((n,s)=>n+(s.teacherCount||0),0);
+  setEl('statStudents', totalStudents>999?(totalStudents/1000).toFixed(1)+'K':totalStudents);
+  setEl('statTeachers', totalTeachers);
+  setEl('statRevenue', '₹'+schools.filter(s=>s.status==='approved').length*25000);
+  document.getElementById('pendingBadge').textContent = schools.filter(s=>s.status==='pending').length;
+}
+
+async function loadSchoolStats() {
+  if (!SCHOOL_ID) { setEl('statTotal','—'); return; }
+  const studentsSnap = await getDocs(query(collection(db,'students'),where('schoolId','==',SCHOOL_ID)));
+  const teachersSnap = await getDocs(query(collection(db,'teachers'),where('schoolId','==',SCHOOL_ID)));
+  const feesSnap     = await getDocs(query(collection(db,'fees'),where('schoolId','==',SCHOOL_ID),where('status','==','pending')));
+
+  setEl('statStudents', studentsSnap.size);
+  setEl('statTeachers', teachersSnap.size);
+  setEl('statPending', feesSnap.size);
+  setEl('statTotal', '—');
+  setEl('statApproved', '—');
+  setEl('statRevenue', '—');
+}
+
+
+// ── SCHOOL ADMIN DASHBOARD CARDS ──
+async function loadSchoolDashboardCards() {
+  if (!SCHOOL_ID) return;
+
+  // Recent Students (last 5)
+  try {
+    const studSnap = await getDocs(query(collection(db,'students'),
+      where('schoolId','==',SCHOOL_ID), limit(5)));
+    const sTbody = document.getElementById('recentStudentsTbody');
+    if (sTbody) {
+      if (studSnap.empty) {
+        sTbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--muted)">No students yet. <button class="see-all" onclick="showSection(&apos;students&apos;)">Add one \u2192</button></td></tr>';
+      } else {
+        const rows = studSnap.docs.map(d => {
+          const s = d.data();
+          return `<tr>
+            <td><div style="font-weight:600">${s.firstName||''} ${s.lastName||''}</div><div style="font-size:.7rem;color:var(--muted)">${s.admissionNo||'—'}</div></td>
+            <td>${s.className||'—'}</td>
+            <td><span class="ptag" style="background:rgba(16,185,129,.1);color:#10b981">${s.isActive!==false?'Active':'Inactive'}</span></td>
+          </tr>`;
+        }).join('');
+        sTbody.innerHTML = rows;
+      }
+    }
+  } catch(e) {}
+
+  // Pending Fees (last 5)
+  try {
+    const feesSnap = await getDocs(query(collection(db,'fees'),
+      where('schoolId','==',SCHOOL_ID), where('status','==','pending'), limit(5)));
+    const fTbody = document.getElementById('recentFeesTbody');
+    if (fTbody) {
+      if (feesSnap.empty) {
+        fTbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--muted)">No pending fees 🎉</td></tr>';
+      } else {
+        fTbody.innerHTML = feesSnap.docs.map(d => {
+          const f = d.data();
+          return `<tr>
+            <td style="font-weight:600">${f.studentName||'—'}</td>
+            <td>${f.feeType||'—'}</td>
+            <td style="font-weight:700;color:#f59e0b">₹${(f.amount||0).toLocaleString('en-IN')}</td>
+          </tr>`;
+        }).join('');
+      }
+    }
+  } catch(e) {}
+
+  // Today's Attendance summary by class
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const attSnap = await getDocs(query(collection(db,'attendance'),
+      where('schoolId','==',SCHOOL_ID), where('date','==',today)));
+    const aTbody = document.getElementById('recentAttTbody');
+    if (aTbody) {
+      if (attSnap.empty) {
+        aTbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--muted)">No attendance marked today. <button class="see-all" onclick="showSection(&apos;attendance&apos;)">Mark now \u2192</button></td></tr>';
+      } else {
+        // Group by className
+        const byClass = {};
+        attSnap.docs.forEach(d => {
+          const a = d.data();
+          const cls = a.className || 'Unknown';
+          if (!byClass[cls]) byClass[cls] = {present:0, absent:0};
+          if (a.status === 'Present') byClass[cls].present++;
+          else byClass[cls].absent++;
+        });
+        aTbody.innerHTML = Object.entries(byClass).map(([cls,data]) => {
+          const total = data.present + data.absent;
+          const rate = total > 0 ? Math.round(data.present/total*100) : 0;
+          return `<tr>
+            <td style="font-weight:600">${cls}</td>
+            <td style="color:#10b981;font-weight:600">${data.present}</td>
+            <td style="color:#ef4444;font-weight:600">${data.absent}</td>
+            <td><span style="font-weight:700;color:${rate>=75?'#10b981':'#f59e0b'}">${rate}%</span></td>
+          </tr>`;
+        }).join('');
+      }
+    }
+  } catch(e) {}
+}
+
+// ── PENDING SCHOOLS TABLE ──
+async function loadPendingSchools() {
+  // No orderBy on filtered query to avoid composite index requirement — sort in JS
+  const q = query(collection(db,'schools'), where('status','==','pending'), limit(10));
+  const snap = await getDocs(q);
+  const tbody = document.getElementById('pendingTbody');
+  if (snap.empty) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--muted)">🎉 No pending schools!</td></tr>';
+    return;
+  }
+  tbody.innerHTML = snap.docs.map(d => {
+    const s = d.data();
+    return `<tr>
+      <td><div style="font-weight:600">${s.name||'—'}</div><div style="font-size:.72rem;color:var(--muted)">${s.city||''} · ${s.email||''}</div></td>
+      <td><span class="ptag p-${s.plan||'basic'}">${(s.plan||'BASIC').toUpperCase()}</span></td>
+      <td>
+        <button class="abtn ok" onclick="approveSchool('${d.id}','${s.name}')">✓ Approve</button>
+        <button class="abtn no" onclick="rejectSchool('${d.id}','${s.name}')">✕ Reject</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── NOTIFICATIONS (real-time) ──
+function listenNotifications() {
+  // school_admin: only see notifications for their schoolId
+  // super_admin: see all notifications
+  let q;
+  if (USER_ROLE === 'super_admin') {
+    q = query(collection(db,'notifications'), orderBy('createdAt','desc'), limit(8));
+  } else {
+    // Filter by schoolId — no orderBy to avoid composite index requirement
+    q = query(collection(db,'notifications'), where('schoolId','==', SCHOOL_ID || ''), limit(8));
+  }
+  onSnapshot(q, snap => {
+    const el = document.getElementById('notifList');
+    if (snap.empty) { el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:.85rem">No notifications yet</div>'; return; }
+    // Sort by createdAt desc in JS (avoids needing composite index)
+    const docs = snap.docs.slice().sort((a,b) => {
+      const at = a.data().createdAt?.toMillis?.() || 0;
+      const bt = b.data().createdAt?.toMillis?.() || 0;
+      return bt - at;
+    });
+    el.innerHTML = docs.map(d => {
+      const n = d.data();
+      return `<div class="nitem">
+        <div class="nicon">${n.icon||'🔔'}</div>
+        <div style="flex:1;min-width:0"><div class="ntitle">${n.title}</div><div class="nsub">${n.message}</div></div>
+        <div class="ntime">${timeAgo(n.createdAt?.toDate())}</div>
+      </div>`;
+    }).join('');
+  });
+}
+
+// ── SCHOOL APPROVE / REJECT ──
+window.approveSchool = async (id, name) => {
+  try {
+    await updateDoc(doc(db,'schools',id), {status:'approved', approvedAt:serverTimestamp()});
+    await addDoc(collection(db,'notifications'), {title:'School Approved ✅', message:`Your school is now active on CampusPrime`, icon:'✅', schoolId: id, createdAt:serverTimestamp()});
+    showToast(`✅ ${name} approved!`, 'success'); loadDashboard();
+  } catch(e) { showToast('Error: '+e.message,'error'); }
+};
+window.rejectSchool = async (id, name) => {
+  if (!confirm(`Reject "${name}"?`)) return;
+  try {
+    await updateDoc(doc(db,'schools',id), {status:'rejected', rejectedAt:serverTimestamp()});
+    showToast(`${name} rejected`,'error'); loadDashboard();
+  } catch(e) { showToast('Error: '+e.message,'error'); }
+};
+
+// ══════════════════════════════════
+// STUDENTS MODULE
+// ══════════════════════════════════
+window.loadStudents = async () => {
+  showSection('students');
+  const scId = await resolveSchoolId();
+  if (!scId) return;
+  const snap = await getDocs(query(collection(db,'students'), where('schoolId','==',scId)));
+  const sortedDocs = snap.docs.slice().sort((a,b)=>((b.data().createdAt?.toMillis?.())||0)-((a.data().createdAt?.toMillis?.())||0));
+  snap._sortedDocs = sortedDocs;
+  const tbody = document.getElementById('studentsTbody');
+  tbody.innerHTML = sortedDocs.length === 0
+    ? '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No students yet. Add one!</td></tr>'
+    : sortedDocs.map(d => {
+        const s = d.data();
+        return `<tr>
+          <td><div style="font-weight:600">${s.firstName} ${s.lastName}</div><div style="font-size:.72rem;color:var(--muted)">${s.admissionNo||''}</div></td>
+          <td>${s.className||'—'}</td>
+          <td>${s.email||'—'}</td>
+          <td>${s.phone||'—'}</td>
+          <td><span class="badge ${s.isActive?'b-ok':'b-err'}">${s.isActive?'Active':'Inactive'}</span></td>
+          <td>
+            <button class="abtn" onclick="editStudent('${d.id}')">✏️ Edit</button>
+            <button class="abtn no" onclick="deleteStudent('${d.id}','${s.firstName}')">🗑️</button>
+          </td>
+        </tr>`;
+      }).join('');
+};
+
+window.openAddStudentModal = () => {
+  document.getElementById('studentModal').style.display = 'flex';
+  document.getElementById('studentForm').reset();
+  document.getElementById('studentDocId').value = '';
+  document.getElementById('studentModalTitle').textContent = 'Add Student';
+};
+
+window.closeStudentModal = () => document.getElementById('studentModal').style.display = 'none';
+
+window.submitStudent = async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('studentSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  const docId = document.getElementById('studentDocId').value;
+  const scId = SCHOOL_ID || sessionStorage.getItem('cp_schoolId') || document.getElementById('schoolPickerVal')?.value || 'default';
+  const data = {
+    firstName: document.getElementById('sFirstName').value.trim(),
+    lastName:  document.getElementById('sLastName').value.trim(),
+    email:     document.getElementById('sEmail').value.trim(),
+    phone:     document.getElementById('sPhone').value.trim(),
+    className: document.getElementById('sClass').value.trim(),
+    dob:       document.getElementById('sDob').value,
+    gender:    document.getElementById('sGender').value,
+    address:   document.getElementById('sAddress').value.trim(),
+    schoolId:  scId,
+    isActive:  true,
+    updatedAt: serverTimestamp(),
+  };
+  try {
+    if (docId) {
+      await updateDoc(doc(db,'students',docId), data);
+      showToast('Student updated ✅','success');
+    } else {
+      data.admissionNo = 'STU' + Date.now().toString().slice(-6);
+      data.createdAt = serverTimestamp();
+      await addDoc(collection(db,'students'), data);
+      showToast('Student added ✅','success');
+    }
+    closeStudentModal();
+    loadStudents();
+  } catch(err) { showToast('Error: '+err.message,'error'); }
+  finally { btn.disabled=false; btn.textContent='Save Student'; }
+};
+
+window.editStudent = async (id) => {
+  const snap = await getDoc(doc(db,'students',id));
+  if (!snap.exists()) return;
+  const s = snap.data();
+  document.getElementById('studentDocId').value = id;
+  document.getElementById('sFirstName').value  = s.firstName||'';
+  document.getElementById('sLastName').value   = s.lastName||'';
+  document.getElementById('sEmail').value      = s.email||'';
+  document.getElementById('sPhone').value      = s.phone||'';
+  document.getElementById('sClass').value      = s.className||'';
+  document.getElementById('sDob').value        = s.dob||'';
+  document.getElementById('sGender').value     = s.gender||'male';
+  document.getElementById('sAddress').value    = s.address||'';
+  document.getElementById('studentModalTitle').textContent = 'Edit Student';
+  document.getElementById('studentModal').style.display = 'flex';
+};
+
+window.deleteStudent = async (id, name) => {
+  if (!confirm(`Delete student "${name}"?`)) return;
+  await deleteDoc(doc(db,'students',id));
+  showToast(`${name} deleted`,'error');
+  loadStudents();
+};
+
+// ══════════════════════════════════
+// TEACHERS MODULE
+// ══════════════════════════════════
+window.loadTeachers = async () => {
+  showSection('teachers');
+  const scId = await resolveSchoolId();
+  if (!scId) { document.getElementById('teachersTbody').innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">Select a school above</td></tr>'; return; }
+  const snap = await getDocs(query(collection(db,'teachers'), where('schoolId','==',scId)));
+  const sortedDocs = snap.docs.slice().sort((a,b)=>((b.data().createdAt?.toMillis?.())||0)-((a.data().createdAt?.toMillis?.())||0));
+  snap._sortedDocs = sortedDocs;
+  const tbody = document.getElementById('teachersTbody');
+  tbody.innerHTML = sortedDocs.length === 0
+    ? '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No teachers yet.</td></tr>'
+    : sortedDocs.map(d => {
+        const t = d.data();
+        return `<tr>
+          <td><div style="font-weight:600">${t.firstName} ${t.lastName}</div><div style="font-size:.72rem;color:var(--muted)">${t.employeeId||''}</div></td>
+          <td>${t.email||'—'}</td>
+          <td>${t.subjects||'—'}</td>
+          <td>${t.qualification||'—'}</td>
+          <td>
+            <button class="abtn" onclick="editTeacher('${d.id}')">✏️ Edit</button>
+            <button class="abtn no" onclick="deleteTeacher('${d.id}','${t.firstName}')">🗑️</button>
+          </td>
+        </tr>`;
+      }).join('');
+};
+
+window.openAddTeacherModal = () => {
+  document.getElementById('teacherModal').style.display = 'flex';
+  document.getElementById('teacherForm').reset();
+  document.getElementById('teacherDocId').value = '';
+  document.getElementById('teacherModalTitle').textContent = 'Add Teacher';
+};
+window.closeTeacherModal = () => document.getElementById('teacherModal').style.display = 'none';
+
+window.submitTeacher = async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('teacherSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  const docId = document.getElementById('teacherDocId').value;
+  const scId  = SCHOOL_ID || sessionStorage.getItem('cp_schoolId') || document.getElementById('schoolPickerVal')?.value || 'default';
+  const data = {
+    firstName:     document.getElementById('tFirstName').value.trim(),
+    lastName:      document.getElementById('tLastName').value.trim(),
+    email:         document.getElementById('tEmail').value.trim(),
+    phone:         document.getElementById('tPhone').value.trim(),
+    subjects:      document.getElementById('tSubjects').value.trim(),
+    qualification: document.getElementById('tQual').value.trim(),
+    schoolId:      scId,
+    isActive:      true,
+    updatedAt:     serverTimestamp(),
+  };
+  try {
+    if (docId) {
+      await updateDoc(doc(db,'teachers',docId), data);
+      showToast('Teacher updated ✅','success');
+    } else {
+      data.employeeId = 'EMP' + Date.now().toString().slice(-5);
+      data.createdAt  = serverTimestamp();
+      await addDoc(collection(db,'teachers'), data);
+      showToast('Teacher added ✅','success');
+    }
+    closeTeacherModal(); loadTeachers();
+  } catch(err) { showToast('Error: '+err.message,'error'); }
+  finally { btn.disabled=false; btn.textContent='Save Teacher'; }
+};
+
+window.editTeacher = async (id) => {
+  const snap = await getDoc(doc(db,'teachers',id));
+  if (!snap.exists()) return;
+  const t = snap.data();
+  document.getElementById('teacherDocId').value  = id;
+  document.getElementById('tFirstName').value    = t.firstName||'';
+  document.getElementById('tLastName').value     = t.lastName||'';
+  document.getElementById('tEmail').value        = t.email||'';
+  document.getElementById('tPhone').value        = t.phone||'';
+  document.getElementById('tSubjects').value     = t.subjects||'';
+  document.getElementById('tQual').value         = t.qualification||'';
+  document.getElementById('teacherModalTitle').textContent = 'Edit Teacher';
+  document.getElementById('teacherModal').style.display = 'flex';
+};
+
+window.deleteTeacher = async (id, name) => {
+  if (!confirm(`Delete teacher "${name}"?`)) return;
+  await deleteDoc(doc(db,'teachers',id));
+  showToast(`${name} deleted`,'error'); loadTeachers();
+};
+
+// ══════════════════════════════════
+// ATTENDANCE MODULE
+// ══════════════════════════════════
+window.loadAttendance = async () => {
+  showSection('attendance');
+  const scId = await resolveSchoolId();
+  if (!scId) { showToast('Select a school first','error'); return; }
+  const date = document.getElementById('attDate').value || new Date().toISOString().split('T')[0];
+  const className = document.getElementById('attClass').value.trim();
+  if (!className) { showToast('Please enter a class name','error'); return; }
+
+  // Load students for this class
+  const studSnap = await getDocs(query(collection(db,'students'),
+    where('schoolId','==',scId), where('className','==',className)));
+
+  // Load existing attendance for this date+class
+  const attSnap = await getDocs(query(collection(db,'attendance'),
+    where('schoolId','==',scId), where('date','==',date), where('className','==',className)));
+  const existing = {};
+  attSnap.forEach(d => { existing[d.data().studentId] = d.data().status; });
+
+  const tbody = document.getElementById('attendanceTbody');
+  if (studSnap.empty) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--muted)">No students in this class</td></tr>';
+    return;
+  }
+  tbody.innerHTML = studSnap.docs.map(d => {
+    const s = d.data();
+    const status = existing[d.id] || 'present';
+    return `<tr>
+      <td>${s.firstName} ${s.lastName}</td>
+      <td>${s.admissionNo||'—'}</td>
+      <td>
+        <select id="att_${d.id}" class="att-select" style="padding:5px 10px;border-radius:8px;border:1px solid var(--bdr);font-family:inherit">
+          <option value="present" ${status==='present'?'selected':''}>Present</option>
+          <option value="absent"  ${status==='absent'?'selected':''}>Absent</option>
+          <option value="late"    ${status==='late'?'selected':''}>Late</option>
+          <option value="excused" ${status==='excused'?'selected':''}>Excused</option>
+        </select>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Store student IDs for save
+  window._attStudents = studSnap.docs.map(d => ({id:d.id, name:`${d.data().firstName} ${d.data().lastName}`}));
+  window._attDate = date;
+  window._attClass = className;
+  window._attSchoolId = scId;
+};
+
+window.saveAttendance = async () => {
+  if (!window._attStudents?.length) { showToast('Load attendance first','error'); return; }
+  const btn = document.getElementById('saveAttBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  try {
+    for (const st of window._attStudents) {
+      const status = document.getElementById('att_'+st.id)?.value || 'present';
+      // Check if record exists
+      const existing = await getDocs(query(collection(db,'attendance'),
+        where('schoolId','==',window._attSchoolId),
+        where('date','==',window._attDate),
+        where('studentId','==',st.id)
+      ));
+      if (!existing.empty) {
+        await updateDoc(doc(db,'attendance',existing.docs[0].id), {status, updatedAt:serverTimestamp()});
+      } else {
+        await addDoc(collection(db,'attendance'), {
+          studentId: st.id, studentName: st.name,
+          className: window._attClass, date: window._attDate,
+          status, schoolId: window._attSchoolId,
+          createdAt: serverTimestamp()
+        });
+      }
+    }
+    showToast('✅ Attendance saved!','success');
+  } catch(e) { showToast('Error: '+e.message,'error'); }
+  finally { btn.disabled=false; btn.textContent='💾 Save Attendance'; }
+};
+
+window.loadAttendanceReport = async () => {
+  const scId = await resolveSchoolId();
+  const startDate = document.getElementById('reportStart').value;
+  const endDate   = document.getElementById('reportEnd').value;
+  if (!startDate || !endDate) { showToast('Select date range','error'); return; }
+
+  const snap = await getDocs(query(collection(db,'attendance'), where('schoolId','==',scId)));
+  const filteredAttDocs = snap.docs.filter(d => d.data().date >= startDate && d.data().date <= endDate);
+
+  const summary = {};
+  snap.forEach(d => {
+    const data = d.data();
+    if (!summary[data.studentId]) summary[data.studentId] = {name:data.studentName, present:0, absent:0, late:0, total:0};
+    summary[data.studentId].total++;
+    summary[data.studentId][data.status] = (summary[data.studentId][data.status]||0)+1;
+  });
+
+  const tbody = document.getElementById('reportTbody');
+  const rows = Object.values(summary);
+  tbody.innerHTML = rows.length ? rows.map(r => `
+    <tr>
+      <td>${r.name}</td>
+      <td>${r.present||0}</td>
+      <td>${r.absent||0}</td>
+      <td>${r.late||0}</td>
+      <td>${r.total}</td>
+      <td><span class="${((r.present||0)/r.total*100)>=75?'badge b-ok':'badge b-err'}">${Math.round(((r.present||0)/r.total)*100)}%</span></td>
+    </tr>`).join('')
+    : '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No attendance data for this range</td></tr>';
+};
+
+// ══════════════════════════════════
+// FEES MODULE
+// ══════════════════════════════════
+window.loadFees = async () => {
+  showSection('fees');
+  const scId = await resolveSchoolId();
+  if (!scId) return;
+  const snap = await getDocs(query(collection(db,'fees'), where('schoolId','==',scId)));
+  const sortedDocs = snap.docs.slice().sort((a,b)=>((b.data().createdAt?.toMillis?.())||0)-((a.data().createdAt?.toMillis?.())||0));
+  snap._sortedDocs = sortedDocs;
+  const tbody = document.getElementById('feesTbody');
+  let totalPending = 0, totalCollected = 0;
+  tbody.innerHTML = sortedDocs.length === 0
+    ? '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No fee records yet.</td></tr>'
+    : sortedDocs.map(d => {
+        const f = d.data();
+        if (f.status==='pending') totalPending += (f.amount||0);
+        if (f.status==='paid') totalCollected += (f.amount||0);
+        return `<tr>
+          <td><div style="font-weight:600">${f.studentName||'—'}</div></td>
+          <td>${f.feeType||'—'}</td>
+          <td>₹${(f.amount||0).toLocaleString('en-IN')}</td>
+          <td>${f.dueDate||'—'}</td>
+          <td><span class="badge ${f.status==='paid'?'b-ok':f.status==='overdue'?'b-err':'b-pend'}">${f.status||'pending'}</span></td>
+          <td>
+            ${f.status!=='paid'
+              ?`<button class="abtn ok" onclick="markFeePaid('${d.id}','${f.studentName}','${f.amount}')">✓ Mark Paid</button>`
+              :`<button class="abtn" onclick="generateReceipt('${d.id}')">🧾 Receipt</button>`}
+            <button class="abtn no" onclick="deleteFee('${d.id}')">🗑️</button>
+          </td>
+        </tr>`;
+      }).join('');
+  setEl('feePending','$'+totalPending);
+  setEl('feeCollected','$'+totalCollected);
+};
+
+window.openAddFeeModal = () => {
+  document.getElementById('feeModal').style.display = 'flex';
+  document.getElementById('feeForm').reset();
+};
+window.closeFeeModal = () => document.getElementById('feeModal').style.display = 'none';
+
+window.submitFee = async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('feeSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  const scId = SCHOOL_ID || sessionStorage.getItem('cp_schoolId') || document.getElementById('schoolPickerVal')?.value || 'default';
+  try {
+    await addDoc(collection(db,'fees'), {
+      studentName: document.getElementById('fStudentName').value.trim(),
+      studentId:   document.getElementById('fStudentId').value.trim(),
+      feeType:     document.getElementById('fFeeType').value,
+      amount:      parseFloat(document.getElementById('fAmount').value),
+      dueDate:     document.getElementById('fDueDate').value,
+      status:      'pending',
+      schoolId:    scId,
+      createdAt:   serverTimestamp(),
+    });
+    showToast('Fee record added ✅','success');
+    closeFeeModal(); loadFees();
+  } catch(err) { showToast('Error: '+err.message,'error'); }
+  finally { btn.disabled=false; btn.textContent='Add Fee Record'; }
+};
+
+window.markFeePaid = async (id, name, amount) => {
+  if (!confirm(`Mark ${name}'s fee of $${amount} as PAID?`)) return;
+  await updateDoc(doc(db,'fees',id), {status:'paid', paidAt:serverTimestamp()});
+  showToast(`✅ $${amount} payment recorded for ${name}`,'success');
+  loadFees();
+};
+window.deleteFee = async (id) => {
+  if (!confirm('Delete this fee record?')) return;
+  await deleteDoc(doc(db,'fees',id));
+  showToast('Fee record deleted','error'); loadFees();
+};
+
+// ══════════════════════════════════
+// EXAMS & RESULTS MODULE
+// ══════════════════════════════════
+window.loadExams = async () => {
+  showSection('exams');
+  const scId = await resolveSchoolId();
+  if (!scId) return;
+  const snap = await getDocs(query(collection(db,'exams'), where('schoolId','==',scId)));
+  const sortedDocs = snap.docs.slice().sort((a,b)=>((b.data().createdAt?.toMillis?.())||0)-((a.data().createdAt?.toMillis?.())||0));
+  snap._sortedDocs = sortedDocs;
+  const tbody = document.getElementById('examsTbody');
+  tbody.innerHTML = sortedDocs.length === 0
+    ? '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No exams yet.</td></tr>'
+    : sortedDocs.map(d => {
+        const ex = d.data();
+        return `<tr>
+          <td><div style="font-weight:600">${ex.title||'—'}</div></td>
+          <td>${ex.subject||'—'}</td>
+          <td>${ex.className||'—'}</td>
+          <td>${ex.date||'—'}</td>
+          <td>
+            <button class="abtn" onclick="openEnterMarks('${d.id}','${ex.title}','${ex.className}')">📝 Enter Marks</button>
+            <button class="abtn no" onclick="deleteExam('${d.id}')">🗑️</button>
+          </td>
+        </tr>`;
+      }).join('');
+};
+
+window.openAddExamModal = () => {
+  document.getElementById('examModal').style.display = 'flex';
+  document.getElementById('examForm').reset();
+};
+window.closeExamModal = () => document.getElementById('examModal').style.display = 'none';
+
+window.submitExam = async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('examSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  const scId = SCHOOL_ID || sessionStorage.getItem('cp_schoolId') || document.getElementById('schoolPickerVal')?.value || 'default';
+  try {
+    await addDoc(collection(db,'exams'), {
+      title:     document.getElementById('exTitle').value.trim(),
+      subject:   document.getElementById('exSubject').value.trim(),
+      className: document.getElementById('exClass').value.trim(),
+      date:      document.getElementById('exDate').value,
+      maxMarks:  parseInt(document.getElementById('exMaxMarks').value)||100,
+      type:      document.getElementById('exType').value,
+      schoolId:  scId,
+      createdAt: serverTimestamp(),
+    });
+    showToast('Exam created ✅','success');
+    closeExamModal(); loadExams();
+  } catch(err) { showToast('Error: '+err.message,'error'); }
+  finally { btn.disabled=false; btn.textContent='Create Exam'; }
+};
+
+window.deleteExam = async (id) => {
+  if (!confirm('Delete this exam?')) return;
+  await deleteDoc(doc(db,'exams',id));
+  showToast('Exam deleted','error'); loadExams();
+};
+
+window.openEnterMarks = async (examId, examTitle, className) => {
+  document.getElementById('marksModal').style.display = 'flex';
+  document.getElementById('marksExamTitle').textContent = examTitle + ' — Enter Marks';
+  window._currentExamId = examId;
+  // Load students for this class
+  const scId = SCHOOL_ID || sessionStorage.getItem('cp_schoolId') || document.getElementById('schoolPickerVal')?.value;
+  const studSnap = await getDocs(query(collection(db,'students'),
+    where('schoolId','==',scId), where('className','==',className)));
+  // Load existing results
+  const resSnap = await getDocs(query(collection(db,'results'), where('examId','==',examId)));
+  const existing = {};
+  resSnap.forEach(d => { existing[d.data().studentId] = {marks:d.data().marks, id:d.id}; });
+  const tbody = document.getElementById('marksTbody');
+  tbody.innerHTML = studSnap.empty
+    ? '<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--muted)">No students in this class</td></tr>'
+    : studSnap.docs.map(d => {
+        const s = d.data();
+        const ex = existing[d.id];
+        return `<tr>
+          <td>${s.firstName} ${s.lastName}</td>
+          <td>${s.admissionNo||'—'}</td>
+          <td><input type="number" id="marks_${d.id}" value="${ex?.marks||''}" min="0" max="100" style="width:80px;padding:5px 8px;border-radius:8px;border:1px solid var(--bdr);font-family:inherit"/></td>
+        </tr>`;
+      }).join('');
+  window._marksStudents = studSnap.docs.map(d=>({id:d.id,name:`${d.data().firstName} ${d.data().lastName}`}));
+  window._existingResults = existing;
+};
+window.closeMarksModal = () => document.getElementById('marksModal').style.display = 'none';
+
+window.saveMarks = async () => {
+  const btn = document.getElementById('saveMarksBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  const scId = SCHOOL_ID || sessionStorage.getItem('cp_schoolId') || document.getElementById('schoolPickerVal')?.value;
+  try {
+    for (const st of (window._marksStudents||[])) {
+      const marks = parseInt(document.getElementById('marks_'+st.id)?.value||0);
+      const grade = marks>=90?'A+':marks>=80?'A':marks>=70?'B':marks>=60?'C':marks>=50?'D':'F';
+      const ex = window._existingResults[st.id];
+      const data = {examId:window._currentExamId, studentId:st.id, studentName:st.name, marks, grade, schoolId:scId, updatedAt:serverTimestamp()};
+      if (ex?.id) { await updateDoc(doc(db,'results',ex.id), data); }
+      else { data.createdAt=serverTimestamp(); await addDoc(collection(db,'results'), data); }
+    }
+    showToast('✅ Marks saved!','success');
+    closeMarksModal();
+  } catch(e) { showToast('Error: '+e.message,'error'); }
+  finally { btn.disabled=false; btn.textContent='💾 Save Marks'; }
+};
+
+// ══════════════════════════════════
+// ANNOUNCEMENTS MODULE
+// ══════════════════════════════════
+window.loadAnnouncements = async () => {
+  showSection('announcements');
+  const scId = await resolveSchoolId();
+  // super_admin sees all; school_admin filters by schoolId
+  const q = (USER_ROLE === 'super_admin' || !scId)
+    ? query(collection(db,'announcements'), orderBy('createdAt','desc'), limit(20))
+    : query(collection(db,'announcements'), where('schoolId','==',scId), limit(20));
+  const snap = await getDocs(q);
+  const list = document.getElementById('announcementsList');
+  const annDocs = snap.docs.slice().sort((a,b)=>((b.data().createdAt?.toMillis?.())||0)-((a.data().createdAt?.toMillis?.())||0));
+  list.innerHTML = annDocs.length === 0
+    ? '<div style="text-align:center;padding:40px;color:var(--muted)">No announcements yet.</div>'
+    : annDocs.map(d => {
+        const a = d.data();
+        return `<div class="ann-card">
+          <div class="ann-head">
+            <div><div class="ann-title">${a.title}</div><div class="ann-meta">${a.target||'ALL'} · ${a.createdAt?.toDate?.()?.toLocaleDateString()||'—'}</div></div>
+            <button class="abtn no" onclick="deleteAnnouncement('${d.id}')">🗑️</button>
+          </div>
+          <div class="ann-body">${a.content}</div>
+        </div>`;
+      }).join('');
+};
+
+window.openAnnouncementModal = () => document.getElementById('announcementModal').style.display = 'flex';
+window.closeAnnouncementModal = () => document.getElementById('announcementModal').style.display = 'none';
+
+window.submitAnnouncement = async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('annSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Posting...';
+  const scId = SCHOOL_ID || sessionStorage.getItem('cp_schoolId') || document.getElementById('schoolPickerVal')?.value || 'platform';
+  try {
+    await addDoc(collection(db,'announcements'), {
+      title:     document.getElementById('annTitle').value.trim(),
+      content:   document.getElementById('annContent').value.trim(),
+      target:    document.getElementById('annTarget').value,
+      schoolId:  scId,
+      createdBy: sessionStorage.getItem('cp_email')||'admin',
+      createdAt: serverTimestamp(),
+    });
+    showToast('Announcement posted ✅','success');
+    closeAnnouncementModal(); loadAnnouncements();
+  } catch(err) { showToast('Error: '+err.message,'error'); }
+  finally { btn.disabled=false; btn.textContent='Post Announcement'; }
+};
+
+window.deleteAnnouncement = async (id) => {
+  if (!confirm('Delete this announcement?')) return;
+  await deleteDoc(doc(db,'announcements',id));
+  showToast('Deleted','error'); loadAnnouncements();
+};
+
+// ══════════════════════════════════
+// CLASSES MODULE
+// ══════════════════════════════════
+window.loadClasses = async () => {
+  showSection('classes');
+  const scId = await resolveSchoolId();
+  if (!scId) return;
+  const snap = await getDocs(query(collection(db,'classes'), where('schoolId','==',scId)));
+  const sortedDocs = snap.docs.slice().sort((a,b)=>((b.data().createdAt?.toMillis?.())||0)-((a.data().createdAt?.toMillis?.())||0));
+  snap._sortedDocs = sortedDocs;
+  const tbody = document.getElementById('classesTbody');
+  tbody.innerHTML = sortedDocs.length === 0
+    ? '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No classes yet. Add one!</td></tr>'
+    : sortedDocs.map(d => {
+        const c = d.data();
+        return `<tr>
+          <td><div style="font-weight:600">${c.name||'—'}</div></td>
+          <td>${c.section||'—'}</td>
+          <td>${c.teacherName||'—'}</td>
+          <td>${c.studentCount||0}</td>
+          <td>
+            <button class="abtn" onclick="editClass('${d.id}')">✏️ Edit</button>
+            <button class="abtn no" onclick="deleteClass('${d.id}','${c.name}')">🗑️</button>
+          </td>
+        </tr>`;
+      }).join('');
+};
+
+window.openAddClassModal = () => {
+  document.getElementById('classModal').style.display = 'flex';
+  document.getElementById('classForm').reset();
+  document.getElementById('classDocId').value = '';
+  document.getElementById('classModalTitle').textContent = 'Add Class';
+};
+window.closeClassModal = () => document.getElementById('classModal').style.display = 'none';
+
+window.submitClass = async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('classSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Saving...';
+  const docId = document.getElementById('classDocId').value;
+  const scId  = SCHOOL_ID || sessionStorage.getItem('cp_schoolId') || document.getElementById('schoolPickerVal')?.value || 'default';
+  const data  = {
+    name:        document.getElementById('cClassName').value.trim(),
+    section:     document.getElementById('cSection').value.trim(),
+    teacherName: document.getElementById('cTeacher').value.trim(),
+    capacity:    parseInt(document.getElementById('cCapacity').value)||30,
+    studentCount:0,
+    schoolId:    scId,
+    updatedAt:   serverTimestamp(),
+  };
+  try {
+    if (docId) {
+      await updateDoc(doc(db,'classes',docId), data);
+      showToast('Class updated ✅','success');
+    } else {
+      data.createdAt = serverTimestamp();
+      await addDoc(collection(db,'classes'), data);
+      showToast('Class added ✅','success');
+    }
+    closeClassModal(); loadClasses();
+  } catch(err) { showToast('Error: '+err.message,'error'); }
+  finally { btn.disabled=false; btn.textContent='Save Class'; }
+};
+
+window.editClass = async (id) => {
+  const snap = await getDoc(doc(db,'classes',id));
+  if (!snap.exists()) return;
+  const c = snap.data();
+  document.getElementById('classDocId').value   = id;
+  document.getElementById('cClassName').value   = c.name||'';
+  document.getElementById('cSection').value     = c.section||'';
+  document.getElementById('cTeacher').value     = c.teacherName||'';
+  document.getElementById('cCapacity').value    = c.capacity||30;
+  document.getElementById('classModalTitle').textContent = 'Edit Class';
+  document.getElementById('classModal').style.display = 'flex';
+};
+
+window.deleteClass = async (id, name) => {
+  if (!confirm(`Delete class "${name}"?`)) return;
+  await deleteDoc(doc(db,'classes',id));
+  showToast('Class deleted','error'); loadClasses();
+};
+
+// ══════════════════════════════════
+// REPORT CARD GENERATION
+// ══════════════════════════════════
+window.openReportCard = async () => {
+  showSection('reportcard');
+  const scId = await resolveSchoolId();
+  if (!scId) return;
+  // Load students dropdown
+  const studSnap = await getDocs(query(collection(db,'students'), where('schoolId','==',scId)));
+  const rcStudentDocs = studSnap.docs.slice().sort((a,b)=>(a.data().firstName||'').localeCompare(b.data().firstName||''));
+  const sel = document.getElementById('rcStudentSel');
+  sel.innerHTML = '<option value="">-- Select Student --</option>' +
+    rcStudentDocs.map(d=>`<option value="${d.id}">${d.data().firstName} ${d.data().lastName} (${d.data().className||''})</option>`).join('');
+};
+
+window.generateReportCard = async () => {
+  const studentId = document.getElementById('rcStudentSel').value;
+  if (!studentId) { showToast('Select a student first','error'); return; }
+
+  const scId = SCHOOL_ID || sessionStorage.getItem('cp_schoolId') || document.getElementById('schoolPickerVal')?.value;
+  const [studSnap, resultsSnap] = await Promise.all([
+    getDoc(doc(db,'students',studentId)),
+    getDocs(query(collection(db,'results'), where('studentId','==',studentId)))
+  ]);
+  if (!studSnap.exists()) { showToast('Student not found','error'); return; }
+  const s = studSnap.data();
+  const results = resultsSnap.docs.map(d=>d.data());
+  const totalMarks = results.reduce((n,r)=>n+(r.marks||0),0);
+  const avgMarks = results.length ? Math.round(totalMarks/results.length) : 0;
+  const overallGrade = avgMarks>=90?'A+':avgMarks>=80?'A':avgMarks>=70?'B':avgMarks>=60?'C':avgMarks>=50?'D':'F';
+
+  const html = `
+    <!DOCTYPE html><html><head><title>Report Card</title>
+    <style>
+      body{font-family:'Inter',sans-serif;max-width:800px;margin:40px auto;padding:24px;color:#1e293b}
+      .header{text-align:center;border-bottom:3px solid #2563eb;padding-bottom:16px;margin-bottom:24px}
+      .logo{font-size:1.8rem;font-weight:900;color:#2563eb}
+      h2{margin:4px 0;font-size:1.1rem;color:#64748b}
+      .student-info{display:grid;grid-template-columns:1fr 1fr;gap:8px;background:#f1f5fd;border-radius:10px;padding:16px;margin-bottom:24px}
+      .info-row{display:flex;gap:8px;font-size:.88rem}
+      .info-label{font-weight:700;color:#64748b;min-width:120px}
+      table{width:100%;border-collapse:collapse;margin-bottom:24px}
+      th{background:#2563eb;color:white;padding:10px 14px;text-align:left;font-size:.82rem}
+      td{padding:10px 14px;border-bottom:1px solid #e2e8f0;font-size:.85rem}
+      tr:nth-child(even) td{background:#f8faff}
+      .grade{display:inline-block;padding:2px 10px;border-radius:100px;font-weight:700;font-size:.8rem}
+      .g-A,.g-Ap{background:#dcfce7;color:#16a34a}
+      .g-B{background:#dbeafe;color:#2563eb}
+      .g-C{background:#fef9c3;color:#ca8a04}
+      .g-D{background:#ffedd5;color:#ea580c}
+      .g-F{background:#fee2e2;color:#dc2626}
+      .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+      .sum-box{text-align:center;background:#f1f5fd;border-radius:10px;padding:16px}
+      .sum-val{font-size:2rem;font-weight:900;color:#2563eb}
+      .sum-lbl{font-size:.75rem;color:#64748b}
+      .footer{text-align:center;font-size:.78rem;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:16px}
+      @media print{button{display:none}}
+    </style></head><body>
+    <div class="header">
+      <div class="logo">CampusPrime</div>
+      <h2>Student Report Card — Academic Year ${new Date().getFullYear()}</h2>
+    </div>
+    <div class="student-info">
+      <div class="info-row"><span class="info-label">Student Name:</span><span>${s.firstName} ${s.lastName}</span></div>
+      <div class="info-row"><span class="info-label">Admission No:</span><span>${s.admissionNo||'—'}</span></div>
+      <div class="info-row"><span class="info-label">Class:</span><span>${s.className||'—'}</span></div>
+      <div class="info-row"><span class="info-label">Generated:</span><span>${new Date().toLocaleDateString()}</span></div>
+    </div>
+    <div class="summary">
+      <div class="sum-box"><div class="sum-val">${results.length}</div><div class="sum-lbl">Subjects</div></div>
+      <div class="sum-box"><div class="sum-val">${avgMarks}%</div><div class="sum-lbl">Average Score</div></div>
+      <div class="sum-box"><div class="sum-val" style="color:${overallGrade==='F'?'#dc2626':'#2563eb'}">${overallGrade}</div><div class="sum-lbl">Overall Grade</div></div>
+    </div>
+    <table>
+      <thead><tr><th>Exam / Subject</th><th>Marks</th><th>Grade</th><th>Remark</th></tr></thead>
+      <tbody>
+        ${results.length
+          ? results.map(r=>`<tr>
+              <td>${r.studentName?r.examId||'Exam':'—'} — ${r.examId||'—'}</td>
+              <td>${r.marks||0} / 100</td>
+              <td><span class="grade g-${(r.grade||'F').replace('+','p')}">${r.grade||'F'}</span></td>
+              <td>${r.marks>=90?'Excellent':r.marks>=75?'Good':r.marks>=60?'Average':r.marks>=50?'Needs Improvement':'Fail'}</td>
+            </tr>`).join('')
+          : '<tr><td colspan="4" style="text-align:center;padding:20px;color:#94a3b8">No results recorded yet</td></tr>'}
+      </tbody>
+    </table>
+    <div class="footer">CampusPrime School Management System · Generated ${new Date().toLocaleString()}</div>
+    <div style="text-align:center;margin-top:20px">
+      <button onclick="window.print()" style="padding:10px 24px;background:#2563eb;color:white;border:none;border-radius:8px;font-size:.9rem;font-weight:600;cursor:pointer">🖨️ Print Report Card</button>
+    </div>
+    </body></html>`;
+
+  const win = window.open('','_blank');
+  win.document.write(html);
+  win.document.close();
+};
+
+// ══════════════════════════════════
+// FEE RECEIPT GENERATION
+// ══════════════════════════════════
+window.generateReceipt = async (feeId) => {
+  const snap = await getDoc(doc(db,'fees',feeId));
+  if (!snap.exists()) { showToast('Fee record not found','error'); return; }
+  const f = snap.data();
+  const receiptNo = 'RCP' + Date.now().toString().slice(-8);
+  const html = `
+    <!DOCTYPE html><html><head><title>Fee Receipt</title>
+    <style>
+      body{font-family:'Inter',sans-serif;max-width:600px;margin:40px auto;padding:24px;color:#1e293b}
+      .header{text-align:center;border-bottom:3px solid #2563eb;padding-bottom:16px;margin-bottom:24px}
+      .logo{font-size:1.8rem;font-weight:900;color:#2563eb}
+      .receipt-no{background:#f1f5fd;border-radius:8px;padding:12px 18px;font-size:.9rem;margin-bottom:20px;display:flex;justify-content:space-between}
+      table{width:100%;border-collapse:collapse;margin-bottom:20px}
+      td{padding:12px 0;border-bottom:1px solid #e2e8f0;font-size:.9rem}
+      td:first-child{color:#64748b;font-weight:600;width:180px}
+      .total-row td{font-weight:700;font-size:1.1rem;color:#2563eb;border-bottom:none;padding-top:16px}
+      .stamp{text-align:center;margin:24px 0}
+      .paid-stamp{display:inline-block;border:3px solid #10b981;border-radius:8px;padding:8px 24px;color:#10b981;font-weight:900;font-size:1.4rem;transform:rotate(-8deg)}
+      .footer{text-align:center;font-size:.75rem;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:16px}
+      @media print{button{display:none}}
+    </style></head><body>
+    <div class="header">
+      <div class="logo">CampusPrime</div>
+      <p style="color:#64748b;font-size:.9rem">Fee Payment Receipt</p>
+    </div>
+    <div class="receipt-no">
+      <span>Receipt No: <strong>${receiptNo}</strong></span>
+      <span>Date: <strong>${f.paidAt?.toDate?.()?.toLocaleDateString() || new Date().toLocaleDateString()}</strong></span>
+    </div>
+    <table>
+      <tr><td>Student Name</td><td>${f.studentName||'—'}</td></tr>
+      <tr><td>Student ID</td><td>${f.studentId||'—'}</td></tr>
+      <tr><td>Fee Type</td><td>${f.feeType||'—'}</td></tr>
+      <tr><td>Due Date</td><td>${f.dueDate||'—'}</td></tr>
+      <tr><td>Payment Status</td><td><strong style="color:#10b981">PAID ✓</strong></td></tr>
+      <tr class="total-row"><td>Amount Paid</td><td>$${f.amount||0}</td></tr>
+    </table>
+    <div class="stamp"><div class="paid-stamp">✓ PAID</div></div>
+    <div class="footer">CampusPrime School Management System · This is a computer-generated receipt</div>
+    <div style="text-align:center;margin-top:20px">
+      <button onclick="window.print()" style="padding:10px 24px;background:#2563eb;color:white;border:none;border-radius:8px;font-size:.9rem;font-weight:600;cursor:pointer">🖨️ Print Receipt</button>
+    </div>
+    </body></html>`;
+  const win = window.open('','_blank');
+  win.document.write(html);
+  win.document.close();
+};
+
+// ── ADD SAMPLE DATA ──
+window.addSampleData = async () => {
+  try {
+    const samples = [
+      {name:'Green Valley Academy', email:'admin@greenvalley.edu', city:'Springfield, IL', plan:'pro', status:'approved', studentCount:847, teacherCount:42, createdAt:serverTimestamp()},
+      {name:'Sunrise International', email:'admin@sunrise.edu', city:'Miami, FL', plan:'enterprise', status:'approved', studentCount:2340, teacherCount:98, createdAt:serverTimestamp()},
+      {name:'Westbrook Academy', email:'admin@westbrook.edu', city:'Seattle, WA', plan:'basic', status:'pending', studentCount:0, teacherCount:0, createdAt:serverTimestamp()},
+      {name:'Brightside Elementary', email:'admin@brightside.edu', city:'Austin, TX', plan:'pro', status:'pending', studentCount:0, teacherCount:0, createdAt:serverTimestamp()},
+    ];
+    for (const s of samples) await addDoc(collection(db,'schools'), s);
+    await addDoc(collection(db,'notifications'), {title:'Sample data added 🎉', message:'4 demo schools added to Firestore', icon:'🎉', createdAt:serverTimestamp()});
+    showToast('✅ Sample data added!','success'); loadDashboard();
+  } catch(e) { showToast('Error: '+e.message,'error'); }
+};
+
+// ── RESOLVE SCHOOL ID (super admin picks from dropdown; school admin uses own) ──
+async function resolveSchoolId() {
+  if (USER_ROLE !== 'super_admin') {
+    return SCHOOL_ID || sessionStorage.getItem('cp_schoolId') || null;
+  }
+  // Super admin: show school picker
+  const schoolsSel = document.getElementById('schoolPickerVal');
+  if (schoolsSel && schoolsSel.value) return schoolsSel.value;
+  // Load picker if not yet shown
+  const snap = await getDocs(query(collection(db,'schools'), where('status','==','approved')));
+  snap._sortedDocs = snap.docs.slice().sort((a,b)=>(a.data().name||'').localeCompare(b.data().name||''));
+  if (snap.empty) { showToast('No approved schools found. Approve a school first.','error'); return null; }
+  const schoolPickerDocs = snap._sortedDocs || snap.docs;
+  const opts = schoolPickerDocs.map(d=>`<option value="${d.id}">${d.data().name}</option>`).join('');
+  const pickerHtml = `
+    <div id="schoolPickerBanner" style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);border-radius:12px;padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span style="font-size:.85rem;font-weight:600;color:#92400e">🏫 Super Admin — viewing school:</span>
+      <select id="schoolPickerVal" onchange="refreshCurrentSection()" style="padding:7px 12px;border-radius:8px;border:1px solid #fbbf24;font-family:inherit;font-size:.85rem;background:#fffbeb">
+        <option value="">-- Select School --</option>${opts}
+      </select>
+    </div>`;
+  const section = document.querySelector('.section[id^="sec-"]:not([style*="none"])');
+  if (section && !document.getElementById('schoolPickerBanner')) {
+    section.insertAdjacentHTML('afterbegin', pickerHtml);
+  }
+  return document.getElementById('schoolPickerVal')?.value || null;
+}
+window.resolveSchoolId = resolveSchoolId;
+
+window.refreshCurrentSection = () => {
+  const active = document.querySelector('.section:not([style*="none"])');
+  if (!active) return;
+  const id = active.id.replace('sec-','');
+  const map = {students:loadStudents,teachers:loadTeachers,attendance:()=>showSection('attendance'),fees:loadFees,exams:loadExams,announcements:loadAnnouncements,dashboard:loadDashboard};
+  if (map[id]) map[id]();
+};
+
+// ── LOGOUT ──
+window.logout = async () => { sessionStorage.clear(); await signOut(auth); window.location.href='login.html'; };
+
+// ── UI HELPERS ──
+function showSection(section) {
+  document.querySelectorAll('.section').forEach(s=>s.style.display='none');
+  document.getElementById('sec-'+section).style.display='block';
+  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('act'));
+  document.querySelector(`[data-section="${section}"]`)?.classList.add('act');
+}
+window.showSection = showSection;
+window.showDashboard = () => { showSection('dashboard'); loadDashboard(); };
+
+function setEl(id, val) { const el=document.getElementById(id); if(el) el.textContent=val; }
+
+function timeAgo(d) {
+  if (!d) return 'now';
+  const s = Math.floor((Date.now()-d.getTime())/1000);
+  if(s<60) return s+'s'; if(s<3600) return Math.floor(s/60)+'m';
+  if(s<86400) return Math.floor(s/3600)+'h'; return Math.floor(s/86400)+'d';
+}
+
+window.showToast = function(msg, type='success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = type==='success'?'#10b981':type==='error'?'#ef4444':'#3b82f6';
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 3500);
+};
+</script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --sw:240px;--sbg:#0d1526;
+  --blue:#3b82f6;--cyan:#06b6d4;--gold:#f59e0b;
+  --ok:#10b981;--err:#ef4444;--pur:#8b5cf6;
+  --bg:#f1f5fd;--card:#fff;--bdr:#e5e9f4;
+  --text:#1e293b;--muted:#64748b;
+  --grad:linear-gradient(135deg,#2563eb,#06b6d4);
+}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+
+/* Loading */
+#loadingScreen{position:fixed;inset:0;background:var(--sbg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999}
+.ll{font-family:'Inter',sans-serif;font-size:2rem;font-weight:800;color:#fff;margin-bottom:20px}.ll span{color:var(--blue)}
+.lspin{width:38px;height:38px;border:3px solid rgba(255,255,255,.1);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.lt{color:rgba(255,255,255,.4);font-size:.85rem;margin-top:14px}
+
+/* Sidebar */
+.sb{position:fixed;top:0;left:0;bottom:0;width:var(--sw);background:var(--sbg);display:flex;flex-direction:column;z-index:100;overflow-y:auto;transition:transform .3s}
+.sb-logo{padding:20px 18px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:10px}
+.lm{width:36px;height:36px;background:var(--grad);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:1.1rem;font-family:'Inter',sans-serif}
+.lt2{font-family:'Inter',sans-serif;font-weight:800;font-size:1.05rem;color:#fff}.lt2 span{color:var(--blue)}
+.ns{padding:14px 10px 4px}
+.nsl{font-size:.6rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.25);padding:0 8px;margin-bottom:6px}
+.ni{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:all .2s;margin-bottom:2px;text-decoration:none;border:none;background:none;width:100%;text-align:left}
+.ni:hover{background:rgba(255,255,255,.06)}.ni.act{background:rgba(59,130,246,.2)}
+.nic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.85rem;flex-shrink:0;background:rgba(255,255,255,.05)}
+.ni.act .nic{background:rgba(59,130,246,.2)}
+.nl{font-size:.82rem;color:rgba(255,255,255,.6)}.ni.act .nl{color:#fff;font-weight:600}
+.nbadge{margin-left:auto;background:var(--err);color:#fff;border-radius:100px;padding:2px 7px;font-size:.62rem;font-weight:700}
+.sf{margin-top:auto;padding:12px 10px;border-top:1px solid rgba(255,255,255,.06)}
+.uc{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:rgba(255,255,255,.04)}
+.ua{width:34px;height:34px;border-radius:50%;background:var(--grad);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.8rem;flex-shrink:0}
+.un{font-size:.8rem;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px}
+.ur{font-size:.68rem;color:rgba(255,255,255,.4)}
+.lob{margin-left:auto;background:none;border:none;color:rgba(255,255,255,.3);cursor:pointer;font-size:1.1rem;transition:color .2s;flex-shrink:0}.lob:hover{color:var(--err)}
+
+/* Main */
+.main{margin-left:var(--sw);min-height:100vh;display:flex;flex-direction:column}
+.topbar{background:var(--card);border-bottom:1px solid var(--bdr);padding:0 20px;height:60px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:50}
+.mbtn{display:none;background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text)}
+.ttl{font-family:'Inter',sans-serif;font-weight:700;font-size:1.05rem;color:var(--text)}
+.tr{margin-left:auto;display:flex;align-items:center;gap:8px}
+.fbbadge{display:flex;align-items:center;gap:5px;background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.3);border-radius:100px;padding:4px 10px;font-size:.7rem;font-weight:700;color:#e65100}
+.fbdot{width:6px;height:6px;background:#ff9800;border-radius:50%;animation:fbp 2s infinite}
+@keyframes fbp{0%,100%{opacity:1}50%{opacity:.3}}
+.ib{width:34px;height:34px;border-radius:9px;background:var(--bg);border:1px solid var(--bdr);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:.9rem}
+
+/* Page */
+.page{padding:20px;flex:1}
+.ph{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:12px}
+.pt{font-family:'Inter',sans-serif;font-weight:800;font-size:1.4rem;color:var(--text);margin-bottom:3px}
+.ps{font-size:.82rem;color:var(--muted)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:10px;font-family:'Inter',sans-serif;font-size:.82rem;font-weight:600;cursor:pointer;border:none;transition:all .2s;text-decoration:none}
+.btp{background:var(--grad);color:#fff;box-shadow:0 4px 14px rgba(37,99,235,.3)}.btp:hover{transform:translateY(-1px)}
+.bto{background:linear-gradient(135deg,#ff9800,#f57c00);color:#fff}
+.btg{background:var(--bg);border:1px solid var(--bdr);color:var(--text)}
+
+/* Stats */
+.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-bottom:20px}
+.sc{background:var(--card);border-radius:14px;padding:18px;border:1px solid var(--bdr);transition:transform .2s}
+.sc:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.st{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+.si{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1rem}
+.sv{font-family:'Inter',sans-serif;font-weight:800;font-size:1.8rem;color:var(--text);line-height:1;margin-bottom:4px}
+.sl{font-size:.75rem;color:var(--muted);font-weight:500}
+.slive{font-size:.65rem;color:#ff9800;font-weight:700}
+
+/* Grid & Card */
+.g2{display:grid;grid-template-columns:1.4fr 1fr;gap:14px;margin-bottom:18px}
+.card{background:var(--card);border-radius:14px;border:1px solid var(--bdr);overflow:hidden}
+.ch{padding:14px 18px;border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:center}
+.ct{font-family:'Inter',sans-serif;font-weight:700;font-size:.92rem;color:var(--text)}
+.csub{font-size:.72rem;color:var(--muted);margin-top:2px}
+.cb{padding:18px}
+.see-all{font-size:.75rem;color:var(--blue);text-decoration:none;font-weight:600}
+
+/* Table */
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+thead th{padding:9px 14px;font-size:.65rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:left;background:var(--bg);border-bottom:1px solid var(--bdr);white-space:nowrap}
+tbody td{padding:11px 14px;font-size:.81rem;color:var(--text);border-bottom:1px solid var(--bdr);vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:#fafbff}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:100px;font-size:.68rem;font-weight:700;white-space:nowrap}
+.b-ok{background:rgba(16,185,129,.1);color:var(--ok)}
+.b-err{background:rgba(239,68,68,.1);color:var(--err)}
+.b-pend{background:rgba(245,158,11,.1);color:var(--gold)}
+.ptag{padding:2px 7px;border-radius:6px;font-size:.65rem;font-weight:700}
+.p-basic{background:rgba(100,116,139,.1);color:var(--muted)}
+.p-pro{background:rgba(59,130,246,.1);color:var(--blue)}
+.p-enterprise{background:rgba(245,158,11,.1);color:var(--gold)}
+.abtn{padding:4px 9px;border-radius:6px;font-size:.7rem;font-weight:600;cursor:pointer;border:1px solid var(--bdr);background:var(--bg);color:var(--text);transition:all .2s;margin-right:3px;white-space:nowrap}
+.abtn:hover{background:var(--blue);color:#fff;border-color:var(--blue)}
+.abtn.ok:hover{background:var(--ok);border-color:var(--ok)}
+.abtn.no:hover{background:var(--err);border-color:var(--err);color:#fff}
+
+/* Notifications */
+.nitem{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--bdr)}
+.nitem:last-child{border-bottom:none}
+.nicon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.85rem;flex-shrink:0;background:rgba(59,130,246,.1)}
+.ntitle{font-size:.81rem;font-weight:600;color:var(--text);margin-bottom:2px}
+.nsub{font-size:.72rem;color:var(--muted)}
+.ntime{font-size:.68rem;color:var(--muted);white-space:nowrap;margin-left:auto}
+
+/* Section headers */
+.sec-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px}
+.sec-title{font-family:'Inter',sans-serif;font-weight:800;font-size:1.2rem;color:var(--text)}
+
+/* Attendance */
+.att-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.att-controls input,.att-controls select{padding:8px 12px;border:1.5px solid var(--bdr);border-radius:10px;font-family:'Inter',sans-serif;font-size:.82rem;color:var(--text);background:#fafbff;outline:none}
+.att-controls input:focus,.att-controls select:focus{border-color:var(--blue)}
+
+/* Fee summary */
+.fee-summary{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+.fee-stat{background:var(--card);border-radius:12px;padding:16px;border:1px solid var(--bdr);text-align:center}
+.fee-val{font-family:'Inter',sans-serif;font-weight:800;font-size:1.6rem;color:var(--text)}
+.fee-lbl{font-size:.75rem;color:var(--muted)}
+
+/* Announcements */
+.ann-card{background:var(--card);border-radius:12px;border:1px solid var(--bdr);padding:16px;margin-bottom:12px}
+.ann-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+.ann-title{font-weight:700;font-size:.92rem;color:var(--text)}
+.ann-meta{font-size:.72rem;color:var(--muted);margin-top:2px}
+.ann-body{font-size:.84rem;color:var(--text);line-height:1.6}
+
+/* Modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto}
+.modal-bg.open,.modal-bg[style*="flex"]{display:flex}
+.modal{background:#fff;border-radius:18px;padding:24px;width:100%;max-width:480px;margin:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal h3{font-family:'Inter',sans-serif;font-size:1.1rem;margin-bottom:6px;color:var(--text)}
+.modal p.msub{font-size:.82rem;color:var(--muted);margin-bottom:18px}
+.fg{margin-bottom:14px}
+.fg label{display:block;font-size:.78rem;font-weight:600;color:var(--text);margin-bottom:5px}
+.fg input,.fg select,.fg textarea{width:100%;padding:9px 12px;border:1.5px solid var(--bdr);border-radius:10px;font-family:'Inter',sans-serif;font-size:.85rem;color:var(--text);outline:none;background:#fafbff;transition:border-color .2s}
+.fg input:focus,.fg select:focus,.fg textarea:focus{border-color:var(--blue)}
+.fg textarea{resize:vertical;min-height:80px}
+.fgrow{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.mbtns{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+.mcancel{padding:9px 16px;border-radius:10px;border:1px solid var(--bdr);background:var(--bg);color:var(--text);font-size:.82rem;font-weight:600;cursor:pointer}
+.mok{padding:9px 16px;border-radius:10px;border:none;background:var(--grad);color:#fff;font-size:.82rem;font-weight:600;cursor:pointer}
+
+/* Toast */
+.toast{position:fixed;bottom:20px;right:20px;color:#fff;padding:11px 18px;border-radius:12px;font-size:.82rem;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.2);z-index:999;transform:translateY(80px);opacity:0;transition:all .3s;max-width:280px}
+.toast.show{transform:translateY(0);opacity:1}
+
+/* Overlay */
+.ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99}.ov.show{display:block}
+
+@media(max-width:900px){
+  .sb{transform:translateX(-100%)}.sb.open{transform:translateX(0)}
+  .main{margin-left:0}.mbtn{display:flex}
+  .g2{grid-template-columns:1fr}
+  .sg{grid-template-columns:repeat(2,1fr)}
+  .fgrow{grid-template-columns:1fr}
+  .fee-summary{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loadingScreen">
+  <div class="ll">Campus<span>Prime</span></div>
+  <div class="lspin"></div>
+  <div class="lt">Loading dashboard...</div>
+</div>
+
+<div id="mainApp" style="display:none">
+<div class="ov" id="ov" onclick="this.classList.remove('show');document.getElementById('sb').classList.remove('open')"></div>
+
+<!-- SIDEBAR -->
+<aside class="sb" id="sb">
+  <div class="sb-logo">
+    <div class="lm">C</div>
+    <div class="lt2">Campus<span>Prime</span></div>
+  </div>
+  <div class="ns">
+    <div class="nsl">Main</div>
+    <button class="ni act" data-section="dashboard" onclick="showDashboard()"><div class="nic">📊</div><span class="nl">Dashboard</span></button>
+    <button class="ni" data-section="students" onclick="loadStudents()"><div class="nic">👨‍🎓</div><span class="nl">Students</span></button>
+    <button class="ni" data-section="teachers" onclick="loadTeachers()"><div class="nic">👨‍🏫</div><span class="nl">Teachers</span></button>
+    <button class="ni" data-section="attendance" onclick="showSection('attendance')"><div class="nic">✅</div><span class="nl">Attendance</span></button>
+    <button class="ni" data-section="fees" onclick="loadFees()"><div class="nic">💰</div><span class="nl">Fees</span></button>
+    <button class="ni" data-section="exams" onclick="loadExams()"><div class="nic">📝</div><span class="nl">Exams</span></button>
+    <button class="ni" data-section="announcements" onclick="loadAnnouncements()"><div class="nic">📢</div><span class="nl">Announcements</span></button>
+    <button class="ni" data-section="classes" onclick="loadClasses()"><div class="nic">🏛️</div><span class="nl">Classes</span></button>
+    <button class="ni" data-section="reportcard" onclick="openReportCard()"><div class="nic">📋</div><span class="nl">Report Cards</span></button>
+  </div>
+  <div class="ns super-only">
+    <div class="nsl">Super Admin</div>
+    <a class="ni" href="schools.html"><div class="nic">🏫</div><span class="nl">All Schools</span><span class="nbadge" id="pendingBadge">0</span></a>
+  </div>
+  <div class="ns">
+    <div class="nsl">System</div>
+    <a class="ni" href="../index.html"><div class="nic">🌐</div><span class="nl">Landing Page</span></a>
+  </div>
+  <div class="sf">
+    <div class="uc">
+      <div class="ua">A</div>
+      <div style="flex:1;min-width:0"><div class="un" id="adminNameEl">Admin</div><div class="ur" id="adminEmailEl">Loading...</div></div>
+      <button class="lob" onclick="logout()" title="Logout">⇥</button>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+  <header class="topbar">
+    <button class="mbtn" onclick="document.getElementById('sb').classList.toggle('open');document.getElementById('ov').classList.toggle('show')">☰</button>
+    <div class="ttl" id="dashTitle">Admin Dashboard</div>
+    <div class="tr">
+      <div class="fbbadge"><span class="fbdot"></span>Firebase Live</div>
+      <div class="ib" onclick="toggleDark()">🌓</div>
+    </div>
+  </header>
+
+  <div class="page">
+
+    <!-- ═══ DASHBOARD SECTION ═══ -->
+    <div class="section" id="sec-dashboard">
+      <div class="ph">
+        <div><div class="pt" id="dashGreet">Good day 👋</div><div class="ps">Live data · Firebase Firestore</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn bto super-only" onclick="addSampleData()">🔥 Add Sample Data</button>
+          <a href="schools.html" class="btn btp super-only">🏫 All Schools</a>
+        </div>
+      </div>
+      <div class="sg">
+        <div class="sc super-only"><div class="st"><div class="si" style="background:rgba(59,130,246,.1)">🏫</div><span class="slive">● LIVE</span></div><div class="sv" id="statTotal">—</div><div class="sl">Schools</div></div>
+        <div class="sc super-only"><div class="st"><div class="si" style="background:rgba(16,185,129,.1)">✅</div><span class="slive">● LIVE</span></div><div class="sv" id="statApproved">—</div><div class="sl">Approved</div></div>
+        <div class="sc"><div class="st"><div class="si" style="background:rgba(245,158,11,.1)">⏳</div><span class="slive">● LIVE</span></div><div class="sv" id="statPending">—</div><div class="sl" id="statPendingLabel">Pending</div></div>
+        <div class="sc"><div class="st"><div class="si" style="background:rgba(6,182,212,.1)">👨‍🎓</div><span class="slive">● LIVE</span></div><div class="sv" id="statStudents">—</div><div class="sl">Students</div></div>
+        <div class="sc"><div class="st"><div class="si" style="background:rgba(139,92,246,.1)">👨‍🏫</div><span class="slive">● LIVE</span></div><div class="sv" id="statTeachers">—</div><div class="sl">Teachers</div></div>
+        <div class="sc super-only"><div class="st"><div class="si" style="background:rgba(16,185,129,.1)">💰</div><span class="slive">● LIVE</span></div><div class="sv" id="statRevenue">—</div><div class="sl">Revenue/mo</div></div>
+      </div>
+      <!-- School Admin Quick Stats Cards -->
+      <div class="school-only-dash" id="schoolDashCards" style="display:none">
+        <div class="g2" style="margin-bottom:16px">
+          <div class="card">
+            <div class="ch"><div class="ct">👨‍🎓 Recent Students</div><button class="see-all" onclick="showSection('students');loadStudents()">View all →</button></div>
+            <div class="tw"><table><thead><tr><th>Name</th><th>Class</th><th>Status</th></tr></thead>
+            <tbody id="recentStudentsTbody"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table></div>
+          </div>
+          <div class="card">
+            <div class="ch"><div class="ct">💳 Pending Fees</div><button class="see-all" onclick="showSection('fees');loadFees()">View all →</button></div>
+            <div class="tw"><table><thead><tr><th>Student</th><th>Type</th><th>Amount</th></tr></thead>
+            <tbody id="recentFeesTbody"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table></div>
+          </div>
+        </div>
+        <div class="g2">
+          <div class="card">
+            <div class="ch"><div class="ct">📅 Today's Attendance</div><button class="see-all" onclick="showSection('attendance')">Mark →</button></div>
+            <div class="tw"><table><thead><tr><th>Class</th><th>Present</th><th>Absent</th><th>Rate</th></tr></thead>
+            <tbody id="recentAttTbody"><tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table></div>
+          </div>
+          <div class="card">
+            <div class="ch"><div class="ct">🔔 Notifications</div><span style="font-size:.7rem;color:#ff9800;font-weight:700">● Real-time</span></div>
+            <div class="cb" style="padding-top:8px"><div id="notifList"><div style="text-align:center;padding:20px;color:var(--muted);font-size:.82rem">Loading...</div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Super Admin Grid -->
+      <div class="g2" id="superDashGrid">
+        <div class="card super-only" id="pendingApprovalsCard">
+          <div class="ch"><div><div class="ct">⏳ Pending Approvals</div><div class="csub">Awaiting review</div></div><a href="schools.html" class="see-all super-only">View all →</a></div>
+          <div class="tw"><table><thead><tr><th>School</th><th>Plan</th><th>Actions</th></tr></thead><tbody id="pendingTbody"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="ch"><div class="ct">🔔 Live Notifications</div><span style="font-size:.7rem;color:#ff9800;font-weight:700">● Real-time</span></div>
+          <div class="cb" style="padding-top:8px"><div id="notifList"><div style="text-align:center;padding:20px;color:var(--muted);font-size:.82rem">Loading...</div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ STUDENTS SECTION ═══ -->
+    <div class="section" id="sec-students" style="display:none">
+      <div class="sec-header">
+        <div class="sec-title">👨‍🎓 Students</div>
+        <button class="btn btp" onclick="openAddStudentModal()">+ Add Student</button>
+      </div>
+      <div class="card"><div class="tw"><table>
+        <thead><tr><th>Student</th><th>Class</th><th>Email</th><th>Phone</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="studentsTbody"><tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody>
+      </table></div></div>
+    </div>
+
+    <!-- ═══ TEACHERS SECTION ═══ -->
+    <div class="section" id="sec-teachers" style="display:none">
+      <div class="sec-header">
+        <div class="sec-title">👨‍🏫 Teachers</div>
+        <button class="btn btp" onclick="openAddTeacherModal()">+ Add Teacher</button>
+      </div>
+      <div class="card"><div class="tw"><table>
+        <thead><tr><th>Teacher</th><th>Email</th><th>Subjects</th><th>Qualification</th><th>Actions</th></tr></thead>
+        <tbody id="teachersTbody"><tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody>
+      </table></div></div>
+    </div>
+
+    <!-- ═══ ATTENDANCE SECTION ═══ -->
+    <div class="section" id="sec-attendance" style="display:none">
+      <div class="sec-title" style="margin-bottom:16px">✅ Attendance</div>
+      <!-- Mark Attendance -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="ch"><div class="ct">Mark Attendance</div></div>
+        <div class="cb">
+          <div class="att-controls">
+            <input type="date" id="attDate"/>
+            <input type="text" id="attClass" placeholder="Class (e.g. Grade 10A)" style="min-width:180px"/>
+            <button class="btn btp" onclick="loadAttendance()">Load Students</button>
+            <button class="btn btg" id="saveAttBtn" onclick="saveAttendance()">💾 Save Attendance</button>
+          </div>
+          <div class="tw"><table>
+            <thead><tr><th>Student</th><th>Admission No</th><th>Status</th></tr></thead>
+            <tbody id="attendanceTbody"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Select a class and date, then click Load Students</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+      <!-- Attendance Report -->
+      <div class="card">
+        <div class="ch"><div class="ct">Attendance Report</div></div>
+        <div class="cb">
+          <div class="att-controls">
+            <input type="date" id="reportStart" placeholder="Start date"/>
+            <input type="date" id="reportEnd" placeholder="End date"/>
+            <button class="btn btp" onclick="loadAttendanceReport()">Generate Report</button>
+          </div>
+          <div class="tw"><table>
+            <thead><tr><th>Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Total</th><th>%</th></tr></thead>
+            <tbody id="reportTbody"><tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">Select a date range and click Generate</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ FEES SECTION ═══ -->
+    <div class="section" id="sec-fees" style="display:none">
+      <div class="sec-header">
+        <div class="sec-title">💰 Fees</div>
+        <button class="btn btp" onclick="openAddFeeModal()">+ Add Fee Record</button>
+      </div>
+      <div class="fee-summary">
+        <div class="fee-stat"><div class="fee-val" id="feePending" style="color:var(--err)">$0</div><div class="fee-lbl">Total Pending</div></div>
+        <div class="fee-stat"><div class="fee-val" id="feeCollected" style="color:var(--ok)">$0</div><div class="fee-lbl">Total Collected</div></div>
+      </div>
+      <div class="card"><div class="tw"><table>
+        <thead><tr><th>Student</th><th>Fee Type</th><th>Amount</th><th>Due Date</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="feesTbody"><tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody>
+      </table></div></div>
+    </div>
+
+    <!-- ═══ EXAMS SECTION ═══ -->
+    <div class="section" id="sec-exams" style="display:none">
+      <div class="sec-header">
+        <div class="sec-title">📝 Exams & Results</div>
+        <button class="btn btp" onclick="openAddExamModal()">+ Create Exam</button>
+      </div>
+      <div class="card"><div class="tw"><table>
+        <thead><tr><th>Exam Title</th><th>Subject</th><th>Class</th><th>Date</th><th>Actions</th></tr></thead>
+        <tbody id="examsTbody"><tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody>
+      </table></div></div>
+    </div>
+
+    <!-- ═══ ANNOUNCEMENTS SECTION ═══ -->
+    <div class="section" id="sec-announcements" style="display:none">
+      <div class="sec-header">
+        <div class="sec-title">📢 Announcements</div>
+        <button class="btn btp" onclick="openAnnouncementModal()">+ New Announcement</button>
+      </div>
+      <div id="announcementsList"><div style="text-align:center;padding:40px;color:var(--muted)">Loading...</div></div>
+    </div>
+
+    <!-- ═══ CLASSES SECTION ═══ -->
+    <div class="section" id="sec-classes" style="display:none">
+      <div class="sec-header">
+        <div class="sec-title">🏛️ Classes</div>
+        <button class="btn btp" onclick="openAddClassModal()">+ Add Class</button>
+      </div>
+      <div class="card"><div class="tw"><table>
+        <thead><tr><th>Class Name</th><th>Section</th><th>Class Teacher</th><th>Students</th><th>Actions</th></tr></thead>
+        <tbody id="classesTbody"><tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody>
+      </table></div></div>
+    </div>
+
+    <!-- ═══ REPORT CARD SECTION ═══ -->
+    <div class="section" id="sec-reportcard" style="display:none">
+      <div class="sec-title" style="margin-bottom:16px">📋 Report Cards</div>
+      <div class="card">
+        <div class="ch"><div class="ct">Generate Student Report Card</div></div>
+        <div class="cb">
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:20px">
+            <div style="flex:1;min-width:220px">
+              <label style="display:block;font-size:.8rem;font-weight:600;margin-bottom:6px">Select Student</label>
+              <select id="rcStudentSel" style="width:100%;padding:10px 12px;border:1.5px solid var(--bdr);border-radius:10px;font-family:inherit;font-size:.85rem;background:#fafbff">
+                <option value="">-- Select Student --</option>
+              </select>
+            </div>
+            <button class="btn btp" onclick="generateReportCard()">📋 Generate Report Card</button>
+          </div>
+          <div style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.15);border-radius:12px;padding:16px">
+            <p style="font-size:.84rem;color:var(--muted)">📌 The report card will open in a new tab with a print option. It includes all recorded exam results for the selected student.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end page -->
+</div><!-- end main -->
+</div><!-- end mainApp -->
+
+<!-- ═══ MODALS ═══ -->
+
+<!-- Student Modal -->
+<div class="modal-bg" id="studentModal">
+  <div class="modal">
+    <h3 id="studentModalTitle">Add Student</h3>
+    <p class="msub">Fill in the student details below</p>
+    <form id="studentForm" onsubmit="submitStudent(event)">
+      <input type="hidden" id="studentDocId"/>
+      <div class="fgrow">
+        <div class="fg"><label>First Name *</label><input id="sFirstName" required placeholder="John"/></div>
+        <div class="fg"><label>Last Name *</label><input id="sLastName" required placeholder="Smith"/></div>
+      </div>
+      <div class="fgrow">
+        <div class="fg"><label>Email</label><input type="email" id="sEmail" placeholder="john@school.edu"/></div>
+        <div class="fg"><label>Phone</label><input id="sPhone" placeholder="+1 555 0000"/></div>
+      </div>
+      <div class="fgrow">
+        <div class="fg"><label>Class *</label><input id="sClass" required placeholder="Grade 10A"/></div>
+        <div class="fg"><label>Date of Birth</label><input type="date" id="sDob"/></div>
+      </div>
+      <div class="fgrow">
+        <div class="fg"><label>Gender</label><select id="sGender"><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select></div>
+        <div class="fg"><label>Address</label><input id="sAddress" placeholder="123 Main St"/></div>
+      </div>
+      <div class="mbtns">
+        <button type="button" class="mcancel" onclick="closeStudentModal()">Cancel</button>
+        <button type="submit" class="mok" id="studentSubmitBtn">Save Student</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Teacher Modal -->
+<div class="modal-bg" id="teacherModal">
+  <div class="modal">
+    <h3 id="teacherModalTitle">Add Teacher</h3>
+    <p class="msub">Fill in the teacher details below</p>
+    <form id="teacherForm" onsubmit="submitTeacher(event)">
+      <input type="hidden" id="teacherDocId"/>
+      <div class="fgrow">
+        <div class="fg"><label>First Name *</label><input id="tFirstName" required placeholder="Sarah"/></div>
+        <div class="fg"><label>Last Name *</label><input id="tLastName" required placeholder="Johnson"/></div>
+      </div>
+      <div class="fgrow">
+        <div class="fg"><label>Email *</label><input type="email" id="tEmail" required placeholder="teacher@school.edu"/></div>
+        <div class="fg"><label>Phone</label><input id="tPhone" placeholder="+1 555 0000"/></div>
+      </div>
+      <div class="fgrow">
+        <div class="fg"><label>Subjects</label><input id="tSubjects" placeholder="Math, Science"/></div>
+        <div class="fg"><label>Qualification</label><input id="tQual" placeholder="M.Sc Mathematics"/></div>
+      </div>
+      <div class="mbtns">
+        <button type="button" class="mcancel" onclick="closeTeacherModal()">Cancel</button>
+        <button type="submit" class="mok" id="teacherSubmitBtn">Save Teacher</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Fee Modal -->
+<div class="modal-bg" id="feeModal">
+  <div class="modal">
+    <h3>Add Fee Record</h3>
+    <p class="msub">Record a fee for a student</p>
+    <form id="feeForm" onsubmit="submitFee(event)">
+      <div class="fgrow">
+        <div class="fg"><label>Student Name *</label><input id="fStudentName" required placeholder="John Smith"/></div>
+        <div class="fg"><label>Student ID</label><input id="fStudentId" placeholder="STU001"/></div>
+      </div>
+      <div class="fgrow">
+        <div class="fg"><label>Fee Type *</label>
+          <select id="fFeeType">
+            <option value="tuition">Tuition</option>
+            <option value="exam">Exam Fee</option>
+            <option value="transport">Transport</option>
+            <option value="library">Library</option>
+            <option value="sports">Sports</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="fg"><label>Amount ($) *</label><input type="number" id="fAmount" required min="1" placeholder="500"/></div>
+      </div>
+      <div class="fg"><label>Due Date *</label><input type="date" id="fDueDate" required/></div>
+      <div class="mbtns">
+        <button type="button" class="mcancel" onclick="closeFeeModal()">Cancel</button>
+        <button type="submit" class="mok" id="feeSubmitBtn">Add Fee Record</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Exam Modal -->
+<div class="modal-bg" id="examModal">
+  <div class="modal">
+    <h3>Create Exam</h3>
+    <p class="msub">Set up a new exam</p>
+    <form id="examForm" onsubmit="submitExam(event)">
+      <div class="fg"><label>Exam Title *</label><input id="exTitle" required placeholder="Mid-Term Mathematics"/></div>
+      <div class="fgrow">
+        <div class="fg"><label>Subject *</label><input id="exSubject" required placeholder="Mathematics"/></div>
+        <div class="fg"><label>Class *</label><input id="exClass" required placeholder="Grade 10A"/></div>
+      </div>
+      <div class="fgrow">
+        <div class="fg"><label>Date *</label><input type="date" id="exDate" required/></div>
+        <div class="fg"><label>Max Marks</label><input type="number" id="exMaxMarks" value="100" min="1"/></div>
+      </div>
+      <div class="fg"><label>Exam Type</label>
+        <select id="exType">
+          <option value="midterm">Mid-Term</option>
+          <option value="final">Final</option>
+          <option value="quiz">Quiz</option>
+          <option value="assignment">Assignment</option>
+          <option value="project">Project</option>
+        </select>
+      </div>
+      <div class="mbtns">
+        <button type="button" class="mcancel" onclick="closeExamModal()">Cancel</button>
+        <button type="submit" class="mok" id="examSubmitBtn">Create Exam</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Enter Marks Modal -->
+<div class="modal-bg" id="marksModal">
+  <div class="modal" style="max-width:560px">
+    <h3 id="marksExamTitle">Enter Marks</h3>
+    <p class="msub">Enter marks out of 100 for each student</p>
+    <div class="tw" style="max-height:360px;overflow-y:auto"><table>
+      <thead><tr><th>Student</th><th>Admission No</th><th>Marks</th></tr></thead>
+      <tbody id="marksTbody"></tbody>
+    </table></div>
+    <div class="mbtns" style="margin-top:16px">
+      <button type="button" class="mcancel" onclick="closeMarksModal()">Cancel</button>
+      <button type="button" class="mok" id="saveMarksBtn" onclick="saveMarks()">💾 Save Marks</button>
+    </div>
+  </div>
+</div>
+
+<!-- Announcement Modal -->
+<div class="modal-bg" id="announcementModal">
+  <div class="modal">
+    <h3>New Announcement</h3>
+    <p class="msub">Post an announcement to your school</p>
+    <form id="announcementForm" onsubmit="submitAnnouncement(event)">
+      <div class="fg"><label>Title *</label><input id="annTitle" required placeholder="Important Notice"/></div>
+      <div class="fg"><label>Content *</label><textarea id="annContent" required placeholder="Write your announcement here..."></textarea></div>
+      <div class="fg"><label>Target Audience</label>
+        <select id="annTarget">
+          <option value="ALL">All (Students + Teachers + Parents)</option>
+          <option value="STUDENTS">Students Only</option>
+          <option value="TEACHERS">Teachers Only</option>
+          <option value="PARENTS">Parents Only</option>
+        </select>
+      </div>
+      <div class="mbtns">
+        <button type="button" class="mcancel" onclick="closeAnnouncementModal()">Cancel</button>
+        <button type="submit" class="mok" id="annSubmitBtn">Post Announcement</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Class Modal -->
+<div class="modal-bg" id="classModal">
+  <div class="modal">
+    <h3 id="classModalTitle">Add Class</h3>
+    <p class="msub">Define a class/grade for your school</p>
+    <form id="classForm" onsubmit="submitClass(event)">
+      <input type="hidden" id="classDocId"/>
+      <div class="fgrow">
+        <div class="fg"><label>Class Name *</label><input id="cClassName" required placeholder="Grade 10 / Class X"/></div>
+        <div class="fg"><label>Section</label><input id="cSection" placeholder="A / B / Science"/></div>
+      </div>
+      <div class="fgrow">
+        <div class="fg"><label>Class Teacher</label><input id="cTeacher" placeholder="Teacher name"/></div>
+        <div class="fg"><label>Capacity</label><input type="number" id="cCapacity" value="30" min="1"/></div>
+      </div>
+      <div class="mbtns">
+        <button type="button" class="mcancel" onclick="closeClassModal()">Cancel</button>
+        <button type="submit" class="mok" id="classSubmitBtn">Save Class</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // Set greeting
+  const h = new Date().getHours();
+  const g = h<12?'Good morning':h<17?'Good afternoon':'Good evening';
+  const gEl = document.getElementById('dashGreet');
+  if (gEl) gEl.textContent = g + ', ' + (sessionStorage.getItem('cp_name')||'Admin') + ' 👋';
+
+  // Set today's date as default for attendance
+  const attDate = document.getElementById('attDate');
+  if (attDate) attDate.value = new Date().toISOString().split('T')[0];
+
+  // Dark mode
+  let dark = false;
+  function toggleDark() {
+    dark = !dark;
+    const r = document.documentElement.style;
+    r.setProperty('--bg', dark?'#0a0f1e':'#f1f5fd');
+    r.setProperty('--card', dark?'#111827':'#fff');
+    r.setProperty('--bdr', dark?'rgba(255,255,255,.08)':'#e5e9f4');
+    r.setProperty('--text', dark?'#e2e8f0':'#1e293b');
+    r.setProperty('--muted', dark?'#94a3b8':'#64748b');
+  }
+
+  // Close modals on overlay click
+  document.querySelectorAll('.modal-bg').forEach(bg => {
+    bg.addEventListener('click', e => { if(e.target===bg) bg.style.display='none'; });
+  });
+</script>
+</body>
+</html>
