@@ -1,0 +1,17 @@
+{
+  "rewrites": [
+    { "source": "/admin", "destination": "/admin/index.html" },
+    { "source": "/admin/login", "destination": "/admin/login.html" },
+    { "source": "/admin/schools", "destination": "/admin/schools.html" },
+    { "source": "/teacher", "destination": "/teacher/dashboard.html" },
+    { "source": "/student", "destination": "/student/dashboard.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    }
+  ]
+}
