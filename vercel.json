@@ -1,0 +1,20 @@
+{
+  "rewrites": [
+    { "source": "/login.html", "destination": "/admin/login.html" },
+    { "source": "/login", "destination": "/admin/login.html" },
+    { "source": "/admin", "destination": "/admin/index.html" },
+    { "source": "/admin/login", "destination": "/admin/login.html" },
+    { "source": "/admin/schools", "destination": "/admin/schools.html" },
+    { "source": "/teacher", "destination": "/teacher/dashboard.html" },
+    { "source": "/student", "destination": "/student/dashboard.html" },
+    { "source": "/dashboard", "destination": "/admin/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    }
+  ]
+}
