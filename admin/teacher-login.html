@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Campus Prime — Teacher Login</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+  import { getFirestore, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDIFLO7rwIJbJnAt2EV7m57ydkPfH9FQzA",
+    authDomain: "campus-prime.firebaseapp.com",
+    projectId: "campus-prime",
+    storageBucket: "campus-prime.firebasestorage.app",
+    messagingSenderId: "934780803109",
+    appId: "1:934780803109:web:678a903369166ce72f07cc"
+  };
+
+  const app  = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db   = getFirestore(app);
+
+  async function routeByRole(user) {
+    try {
+      const q = query(collection(db, 'users'), where('uid', '==', user.uid));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const userData = snap.docs[0].data();
+        const role = userData.role || '';
+        if (role !== 'teacher') {
+          showError('⚠️ This portal is for Teachers only. Please use the correct login page.');
+          await auth.signOut();
+          return;
+        }
+        sessionStorage.setItem('cp_uid', user.uid);
+        sessionStorage.setItem('cp_email', user.email);
+        sessionStorage.setItem('cp_role', role);
+        sessionStorage.setItem('cp_name', userData.displayName || user.email);
+        if (userData.schoolId) sessionStorage.setItem('cp_schoolId', userData.schoolId);
+        if (userData.schoolName) sessionStorage.setItem('cp_schoolName', userData.schoolName);
+        window.location.href = 'dashboard.html';
+      } else {
+        showError('⚠️ No teacher account found for this email.');
+        await auth.signOut();
+      }
+    } catch (err) {
+      console.error('Role routing error:', err);
+      showError('⚠️ Login error. Please try again.');
+    }
+  }
+
+  onAuthStateChanged(auth, (user) => {
+    if (user && sessionStorage.getItem('cp_role') === 'teacher') {
+      window.location.href = 'dashboard.html';
+    }
+  });
+
+  window.handleLogin = async (e) => {
+    e.preventDefault();
+    const email    = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    const btn      = document.getElementById('loginBtn');
+
+    btn.classList.add('loading');
+    hideError();
+
+    try {
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      await routeByRole(cred.user);
+    } catch (err) {
+      btn.classList.remove('loading');
+      let msg = 'Login failed. Please try again.';
+      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        msg = 'Invalid email or password.';
+      } else if (err.code === 'auth/too-many-requests') {
+        msg = 'Too many attempts. Please try again later.';
+      } else if (err.code === 'auth/invalid-email') {
+        msg = 'Please enter a valid email address.';
+      } else {
+        msg = err.message || msg;
+      }
+      showError('⚠️ ' + msg);
+    }
+  };
+
+  window.togglePass = () => {
+    const inp = document.getElementById('password');
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+  };
+
+  function showError(msg) {
+    const el = document.getElementById('errorMsg');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+  function hideError() {
+    document.getElementById('errorMsg').style.display = 'none';
+  }
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --accent: #7c3aed;
+    --grad: linear-gradient(135deg, #6d28d9, #7c3aed, #a78bfa);
+    --text: #1e293b; --text-muted: #64748b;
+    --border: #e2e8f0; --danger: #ef4444;
+  }
+  body {
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 20px; -webkit-font-smoothing: antialiased;
+    background: radial-gradient(ellipse 80% 60% at 30% 20%, rgba(124,58,237,0.09) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 50% at 80% 80%, rgba(167,139,250,0.06) 0%, transparent 60%), #faf5ff;
+  }
+  .wrap { width: 100%; max-width: 420px; }
+
+  .portal-badge {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    background: rgba(124,58,237,0.08); border: 1.5px solid rgba(124,58,237,0.2);
+    border-radius: 100px; padding: 6px 16px; margin-bottom: 24px;
+    font-size: 0.8rem; font-weight: 700; color: var(--accent);
+    width: fit-content; margin-left: auto; margin-right: auto;
+  }
+  .portal-badge .dot { width: 7px; height: 7px; background: var(--accent); border-radius: 50%; }
+
+  .logo {
+    display: flex; align-items: center; justify-content: center;
+    gap: 10px; margin-bottom: 10px; text-decoration: none;
+  }
+  .logo-mark {
+    width: 44px; height: 44px; background: var(--grad);
+    border-radius: 12px; display: flex; align-items: center;
+    justify-content: center; color: white; font-weight: 800; font-size: 1.3rem;
+  }
+  .logo-text { font-weight: 800; font-size: 1.4rem; color: #0d1526; }
+  .logo-text span { color: var(--accent); }
+
+  .card {
+    background: white; border-radius: 24px;
+    padding: 36px 32px; border: 1px solid var(--border);
+    box-shadow: 0 4px 32px rgba(124,58,237,0.08);
+    margin-bottom: 16px;
+  }
+
+  .role-icon {
+    width: 56px; height: 56px; background: var(--grad);
+    border-radius: 16px; display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem; margin-bottom: 18px;
+  }
+
+  h1 { font-size: 1.7rem; font-weight: 800; color: var(--text); margin-bottom: 4px; }
+  .sub { font-size: 0.87rem; color: var(--text-muted); margin-bottom: 26px; }
+
+  .error {
+    background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25);
+    border-radius: 10px; padding: 10px 14px;
+    font-size: 0.83rem; color: var(--danger);
+    margin-bottom: 18px; display: none;
+  }
+  .fg { margin-bottom: 18px; }
+  label { display: block; font-size: 0.82rem; font-weight: 600; color: var(--text); margin-bottom: 7px; }
+  .inp-wrap { position: relative; }
+  .inp-icon { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); font-size: 1rem; pointer-events: none; }
+  input[type=email], input[type=password], input[type=text] {
+    width: 100%; padding: 12px 14px 12px 40px;
+    border: 1.5px solid var(--border); border-radius: 12px;
+    font-family: 'Inter', sans-serif; font-size: 0.92rem;
+    color: var(--text); outline: none; background: #fafbff;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124,58,237,0.08); background: white; }
+  .eye { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--text-muted); }
+
+  .btn-login {
+    width: 100%; padding: 14px; background: var(--grad);
+    color: white; border: none; border-radius: 12px;
+    font-family: 'Inter', sans-serif; font-size: 1rem; font-weight: 700;
+    cursor: pointer; transition: all 0.25s;
+    box-shadow: 0 4px 16px rgba(124,58,237,0.3);
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    margin-top: 8px;
+  }
+  .btn-login:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(124,58,237,0.4); }
+  .btn-login.loading { opacity: 0.8; pointer-events: none; }
+  .spinner { width: 18px; height: 18px; border: 2.5px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; display: none; }
+  .btn-login.loading .spinner { display: block; }
+  .btn-login.loading .btn-txt { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .other-portals {
+    background: #f8faff; border: 1px solid var(--border);
+    border-radius: 14px; padding: 16px; margin-top: 18px;
+  }
+  .other-portals p { font-size: 0.78rem; color: var(--text-muted); font-weight: 600; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .portal-links { display: flex; flex-direction: column; gap: 8px; }
+  .portal-link {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 10px; text-decoration: none;
+    font-size: 0.83rem; font-weight: 600; transition: background 0.15s;
+    border: 1px solid transparent;
+  }
+  .portal-link:hover { background: white; border-color: var(--border); }
+  .portal-link .pl-icon { font-size: 1.1rem; }
+  .portal-link .pl-label { color: var(--text); }
+  .portal-link .pl-arrow { margin-left: auto; color: var(--text-muted); font-size: 0.8rem; }
+
+  .back { text-align: center; margin-top: 16px; }
+  .back a { color: var(--text-muted); font-size: 0.83rem; text-decoration: none; }
+  .back a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a href="../index.html" class="logo">
+    <div class="logo-mark">C</div>
+    <div class="logo-text">Campus<span>Prime</span></div>
+  </a>
+
+  <div class="portal-badge"><span class="dot"></span> Teacher Portal</div>
+
+  <div class="card">
+    <div class="role-icon">👨‍🏫</div>
+    <h1>Teacher Login</h1>
+    <p class="sub">Access your classes, attendance, and student records</p>
+
+    <div class="error" id="errorMsg"></div>
+
+    <form onsubmit="handleLogin(event)">
+      <div class="fg">
+        <label>Email Address</label>
+        <div class="inp-wrap">
+          <span class="inp-icon">📧</span>
+          <input type="email" id="email" placeholder="teacher@yourschool.edu" required autocomplete="email"/>
+        </div>
+      </div>
+      <div class="fg">
+        <label>Password</label>
+        <div class="inp-wrap">
+          <span class="inp-icon">🔒</span>
+          <input type="password" id="password" placeholder="Your password" required/>
+          <button type="button" class="eye" onclick="togglePass()">👁️</button>
+        </div>
+      </div>
+      <button type="submit" class="btn-login" id="loginBtn">
+        <div class="spinner"></div>
+        <span class="btn-txt">Sign In to Dashboard →</span>
+      </button>
+    </form>
+
+    <div class="other-portals">
+      <p>Wrong portal? Go to</p>
+      <div class="portal-links">
+        <a href="../admin/school-login.html" class="portal-link">
+          <span class="pl-icon">🏫</span>
+          <span class="pl-label">School Admin Login</span>
+          <span class="pl-arrow">→</span>
+        </a>
+        <a href="../student/login.html" class="portal-link">
+          <span class="pl-icon">👨‍🎓</span>
+          <span class="pl-label">Student Login</span>
+          <span class="pl-arrow">→</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="back"><a href="../index.html">← Back to Campus Prime</a></div>
+</div>
+</body>
+</html>
+
