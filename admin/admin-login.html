@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Campus Prime — Admin Login</title>
+<title>Campus Prime — Super Admin Login</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 
 <script type="module">
@@ -24,35 +24,25 @@
   const auth = getAuth(app);
   const db   = getFirestore(app);
 
-  // Route user to correct dashboard based on role
   async function routeByRole(user) {
     try {
       const q = query(collection(db, 'users'), where('uid', '==', user.uid));
       const snap = await getDocs(q);
       if (!snap.empty) {
         const userData = snap.docs[0].data();
-        const role = userData.role || 'school_admin';
-        // Store role in sessionStorage for dashboard use
+        const role = userData.role || 'super_admin';
+        if (role !== 'super_admin') {
+          showError('⚠️ This portal is for Super Admins only. Please use the correct login page.');
+          await auth.signOut();
+          return;
+        }
         sessionStorage.setItem('cp_uid', user.uid);
         sessionStorage.setItem('cp_email', user.email);
         sessionStorage.setItem('cp_role', role);
         sessionStorage.setItem('cp_name', userData.displayName || user.email);
-        if (userData.schoolId) sessionStorage.setItem('cp_schoolId', userData.schoolId);
-        if (userData.schoolName) sessionStorage.setItem('cp_schoolName', userData.schoolName);
-
-        // Route to correct dashboard
-        if (role === 'super_admin') {
-          window.location.href = 'index.html';
-        } else if (role === 'teacher') {
-          window.location.href = '../teacher/dashboard.html';
-        } else if (role === 'student') {
-          window.location.href = '../student/dashboard.html';
-        } else {
-          // school_admin → admin dashboard
-          window.location.href = 'index.html';
-        }
+        window.location.href = 'index.html';
       } else {
-        // No user doc — check if super admin by email
+        // No user doc — treat as super admin
         sessionStorage.setItem('cp_uid', user.uid);
         sessionStorage.setItem('cp_email', user.email);
         sessionStorage.setItem('cp_role', 'super_admin');
@@ -64,26 +54,20 @@
     }
   }
 
-  // If already logged in → route immediately
   onAuthStateChanged(auth, (user) => {
-    if (user && sessionStorage.getItem('cp_role')) {
-      const role = sessionStorage.getItem('cp_role');
-      if (role === 'teacher') window.location.href = '../teacher/dashboard.html';
-      else if (role === 'student') window.location.href = '../student/dashboard.html';
-      else window.location.href = 'index.html';
+    if (user && sessionStorage.getItem('cp_role') === 'super_admin') {
+      window.location.href = 'index.html';
     }
   });
 
-  // Handle login form
   window.handleLogin = async (e) => {
     e.preventDefault();
     const email    = document.getElementById('email').value.trim();
     const password = document.getElementById('password').value;
     const btn      = document.getElementById('loginBtn');
-    const errorEl  = document.getElementById('errorMsg');
 
     btn.classList.add('loading');
-    errorEl.style.display = 'none';
+    hideError();
 
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
@@ -100,8 +84,7 @@
       } else {
         msg = err.message || msg;
       }
-      errorEl.textContent = '⚠️ ' + msg;
-      errorEl.style.display = 'block';
+      showError('⚠️ ' + msg);
     }
   };
 
@@ -109,51 +92,71 @@
     const inp = document.getElementById('password');
     inp.type = inp.type === 'password' ? 'text' : 'password';
   };
+
+  function showError(msg) {
+    const el = document.getElementById('errorMsg');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+  function hideError() {
+    document.getElementById('errorMsg').style.display = 'none';
+  }
 </script>
 
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --blue: #2563eb; --grad: linear-gradient(135deg,#2563eb,#06b6d4);
+    --accent: #2563eb;
+    --grad: linear-gradient(135deg, #1d4ed8, #2563eb, #06b6d4);
     --text: #1e293b; --text-muted: #64748b;
-    --border: #e2e8f0; --bg: #f1f5fd; --danger: #ef4444;
+    --border: #e2e8f0; --danger: #ef4444;
   }
   body {
     font-family: 'Inter', sans-serif;
-    background: var(--bg); min-height: 100vh;
-    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
-    display: flex; align-items: center; justify-content: center;
-    padding: 20px;
-    background: radial-gradient(ellipse 80% 60% at 30% 20%, rgba(37,99,235,0.08) 0%, transparent 60%),
-                radial-gradient(ellipse 60% 50% at 80% 80%, rgba(6,182,212,0.06) 0%, transparent 60%), #f1f5fd;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 20px; -webkit-font-smoothing: antialiased;
+    background: radial-gradient(ellipse 80% 60% at 30% 20%, rgba(37,99,235,0.1) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 50% at 80% 80%, rgba(6,182,212,0.07) 0%, transparent 60%), #f1f5fd;
   }
   .wrap { width: 100%; max-width: 420px; }
+
+  .portal-badge {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    background: rgba(37,99,235,0.08); border: 1.5px solid rgba(37,99,235,0.2);
+    border-radius: 100px; padding: 6px 16px; margin-bottom: 24px;
+    font-size: 0.8rem; font-weight: 700; color: var(--accent);
+    width: fit-content; margin-left: auto; margin-right: auto;
+  }
+  .portal-badge .dot { width: 7px; height: 7px; background: var(--accent); border-radius: 50%; }
+
   .logo {
     display: flex; align-items: center; justify-content: center;
-    gap: 10px; margin-bottom: 32px; text-decoration: none;
+    gap: 10px; margin-bottom: 10px; text-decoration: none;
   }
   .logo-mark {
     width: 44px; height: 44px; background: var(--grad);
     border-radius: 12px; display: flex; align-items: center;
-    justify-content: center; color: white;
-    font-family: 'Inter', sans-serif; font-weight: 800; font-size: 1.3rem;
+    justify-content: center; color: white; font-weight: 800; font-size: 1.3rem;
   }
-  .logo-text { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 1.4rem; color: #0d1526; }
-  .logo-text span { color: var(--blue); }
+  .logo-text { font-weight: 800; font-size: 1.4rem; color: #0d1526; }
+  .logo-text span { color: var(--accent); }
+
   .card {
-    background: white; border-radius: 20px;
+    background: white; border-radius: 24px;
     padding: 36px 32px; border: 1px solid var(--border);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.07);
+    box-shadow: 0 4px 32px rgba(37,99,235,0.08);
+    margin-bottom: 16px;
   }
-  .badge {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: rgba(37,99,235,0.08); border: 1px solid rgba(37,99,235,0.2);
-    border-radius: 100px; padding: 5px 14px;
-    font-size: 0.78rem; font-weight: 700; color: var(--blue); margin-bottom: 16px;
+
+  .role-icon {
+    width: 56px; height: 56px; background: var(--grad);
+    border-radius: 16px; display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem; margin-bottom: 18px;
   }
-  .bdot { width: 6px; height: 6px; background: var(--blue); border-radius: 50%; }
-  h1 { font-family: 'Inter', sans-serif; font-size: 1.7rem; font-weight: 800; color: var(--text); margin-bottom: 5px; }
-  .sub { font-size: 0.87rem; color: var(--text-muted); margin-bottom: 28px; }
+
+  h1 { font-size: 1.7rem; font-weight: 800; color: var(--text); margin-bottom: 4px; }
+  .sub { font-size: 0.87rem; color: var(--text-muted); margin-bottom: 26px; }
+
   .error {
     background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25);
     border-radius: 10px; padding: 10px 14px;
@@ -171,8 +174,9 @@
     color: var(--text); outline: none; background: #fafbff;
     transition: border-color 0.2s, box-shadow 0.2s;
   }
-  input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37,99,235,0.08); background: white; }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.08); background: white; }
   .eye { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--text-muted); }
+
   .btn-login {
     width: 100%; padding: 14px; background: var(--grad);
     color: white; border: none; border-radius: 12px;
@@ -188,19 +192,27 @@
   .btn-login.loading .spinner { display: block; }
   .btn-login.loading .btn-txt { display: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .role-tabs { display:flex; gap:4px; background:var(--bg); border-radius:12px; padding:4px; margin-bottom:20px; }
-  .rtab { flex:1; padding:8px 4px; border:none; background:transparent; border-radius:8px; font-family:'Inter',sans-serif; font-size:0.75rem; font-weight:600; color:var(--text-muted); cursor:pointer; transition:all 0.2s; white-space:nowrap; }
-  .rtab.active { background:white; color:var(--blue); box-shadow:0 2px 8px rgba(0,0,0,0.08); }
-  .firebase-note {
-    display: flex; align-items: center; gap: 8px;
-    background: rgba(255,152,0,0.08); border: 1px solid rgba(255,152,0,0.2);
-    border-radius: 10px; padding: 10px 14px;
-    font-size: 0.78rem; color: #e65100; margin-top: 18px;
+
+  .other-portals {
+    background: #f8faff; border: 1px solid var(--border);
+    border-radius: 14px; padding: 16px; margin-top: 18px;
   }
-  .back { text-align: center; margin-top: 20px; }
+  .other-portals p { font-size: 0.78rem; color: var(--text-muted); font-weight: 600; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .portal-links { display: flex; flex-direction: column; gap: 8px; }
+  .portal-link {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 10px; text-decoration: none;
+    font-size: 0.83rem; font-weight: 600; transition: background 0.15s;
+    border: 1px solid transparent;
+  }
+  .portal-link:hover { background: white; border-color: var(--border); }
+  .portal-link .pl-icon { font-size: 1.1rem; }
+  .portal-link .pl-label { color: var(--text); }
+  .portal-link .pl-arrow { margin-left: auto; color: var(--text-muted); font-size: 0.8rem; }
+
+  .back { text-align: center; margin-top: 16px; }
   .back a { color: var(--text-muted); font-size: 0.83rem; text-decoration: none; }
-  .back a:hover { color: var(--blue); }
-  .hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 14px; text-align: center; }
+  .back a:hover { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -210,18 +222,12 @@
     <div class="logo-text">Campus<span>Prime</span></div>
   </a>
 
-  <div class="card">
-    <div class="badge"><span class="bdot"></span> Secure Sign In</div>
-    <h1>Welcome back</h1>
-    <p class="sub">Sign in to your Campus Prime account</p>
+  <div class="portal-badge"><span class="dot"></span> Super Admin Portal</div>
 
-    <!-- Role selector -->
-    <div class="role-tabs">
-      <button class="rtab active" onclick="setRole('super_admin',this)">Super Admin</button>
-      <button class="rtab" onclick="setRole('school_admin',this)">School Admin</button>
-      <button class="rtab" onclick="setRole('teacher',this)">Teacher</button>
-      <button class="rtab" onclick="setRole('student',this)">Student</button>
-    </div>
+  <div class="card">
+    <div class="role-icon">🔐</div>
+    <h1>Super Admin Login</h1>
+    <p class="sub">Platform-level access — CampusPrime HQ only</p>
 
     <div class="error" id="errorMsg"></div>
 
@@ -247,31 +253,29 @@
       </button>
     </form>
 
-    <div class="firebase-note">
-      🔥 Powered by Firebase Auth · campus-prime project
+    <div class="other-portals">
+      <p>Wrong portal? Go to</p>
+      <div class="portal-links">
+        <a href="school-login.html" class="portal-link">
+          <span class="pl-icon">🏫</span>
+          <span class="pl-label">School Admin Login</span>
+          <span class="pl-arrow">→</span>
+        </a>
+        <a href="../teacher/login.html" class="portal-link">
+          <span class="pl-icon">👨‍🏫</span>
+          <span class="pl-label">Teacher Login</span>
+          <span class="pl-arrow">→</span>
+        </a>
+        <a href="../student/login.html" class="portal-link">
+          <span class="pl-icon">👨‍🎓</span>
+          <span class="pl-label">Student Login</span>
+          <span class="pl-arrow">→</span>
+        </a>
+      </div>
     </div>
-
-    <p class="hint">
-      First time? Register your school on the <a href="../index.html" style="color:var(--blue)">home page</a>
-    </p>
   </div>
 
   <div class="back"><a href="../index.html">← Back to Campus Prime</a></div>
 </div>
-<script>
-  let selectedRole = 'super_admin';
-  function setRole(role, el) {
-    selectedRole = role;
-    document.querySelectorAll('.rtab').forEach(t => t.classList.remove('active'));
-    el.classList.add('active');
-    const placeholders = {
-      super_admin: 'admin@campusprime.com',
-      school_admin: 'admin@yourschool.edu',
-      teacher: 'teacher@yourschool.edu',
-      student: 'student@yourschool.edu'
-    };
-    document.getElementById('email').placeholder = placeholders[role] || 'your@email.com';
-  }
-</script>
 </body>
 </html>
