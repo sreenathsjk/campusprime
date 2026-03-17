@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
@@ -1010,7 +1010,6 @@ textarea{resize:vertical;min-height:78px}
   <nav class="inner-nav"><div class="wrap"><div class="nav-inner">
     <a href="#" class="logo" onclick="pg('home')"><div class="logo-mark">C</div>Campus<span>Prime</span></a>
     <div style="margin-left:auto;display:flex;gap:10px">
-      <a href="#" class="btn btn-ghost btn-sm" onclick="pg('home')">← Home</a>
       <a href="admin/login.html" class="btn btn-ghost btn-sm">Already registered? Login</a>
     </div>
   </div></div></nav>
@@ -1176,7 +1175,21 @@ function pg(name){
     if(el) el.style.display=(p===name)?'block':'none';
   });
   window.scrollTo(0,0);
+  // Push state so browser back button works
+  if(name==='home'){
+    history.pushState({page:'home'},'','#');
+  } else {
+    history.pushState({page:name},'','#'+name);
+  }
 }
+// Browser back button → always go to home
+window.addEventListener('popstate',function(e){
+  ALL_PAGES.forEach(p=>{
+    const el=document.getElementById('pg-'+p);
+    if(el) el.style.display=(p==='home')?'block':'none';
+  });
+  window.scrollTo(0,0);
+});
 
 // ── MODAL ──
 function openM(){
